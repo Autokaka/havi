@@ -1,0 +1,34 @@
+{
+  "name": "havi",
+  "version": "0.1.0",
+  "description": "Deterministic HTML-to-video renderer.",
+  "type": "module",
+  "bin": {
+    "havi": "havi/havi.js"
+  },
+  "main": "havi/index.js",
+  "types": "havi/index.d.ts",
+  "files": [
+    "havi",
+    "postinstall.js"
+  ],
+  "scripts": {
+    "postinstall": "./postinstall.js",
+    "build": "./build.ts"
+  },
+  "dependencies": {
+    "fflate": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Autokaka/havi.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}

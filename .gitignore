@@ -1,0 +1,9 @@
+/target
+/dist
+/bin
+/*.app
+/out.mp4
+/run.log
+/run.pid
+/node_modules
+.DS_Store

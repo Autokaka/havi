@@ -1,0 +1,59 @@
+[package]
+name = "havi"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic HTML-to-video renderer: CEF off-screen rendering + ffmpeg, in Rust."
+
+[lib]
+name = "havi_core"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "havi"
+path = "src/main.rs"
+
+# macOS spawns this as renderer/gpu/utility helper.
+[[bin]]
+name = "havi-helper"
+path = "src/cef/helper.rs"
+
+[dependencies]
+# 148.2.0+148.0.8 → CEF 148 → Chromium 148.
+cef = "148.2.0"
+clap = { version = "4", features = ["derive"] }
+signal-hook = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+indicatif = "0.17"
+globset = "0.4"
+napi = { version = "2", default-features = false, features = ["napi4", "tokio_rt"], optional = true }
+napi-derive = { version = "2", optional = true }
+
+[build-dependencies]
+napi-build = { version = "2", optional = true }
+
+[features]
+default = []
+napi-binding = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+
+# Without a CefAppProtocol NSApplication subclass, cef_initialize deadlocks.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSResponder", "NSEvent"] }
+
+[package.metadata.cef.bundle]
+helper_name = "havi-helper"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

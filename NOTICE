@@ -1,0 +1,49 @@
+havi — Third-Party Notices
+==========================
+
+havi is licensed under the BSD 3-Clause License (see LICENSE).
+
+Distributions of havi bundle third-party software listed below. License
+texts are linked at their upstream URLs.
+
+---
+
+Chromium Embedded Framework (CEF)
+  License:  BSD 3-Clause
+  Copyright: © 2008–present Marshall A. Greenblatt
+  Upstream: https://bitbucket.org/chromiumembedded/cef
+  License:  https://bitbucket.org/chromiumembedded/cef/src/master/LICENSE.txt
+
+Chromium
+  License:  BSD 3-Clause (+ subcomponent licenses)
+  Copyright: © The Chromium Authors
+  Upstream: https://chromium.googlesource.com/chromium/src/
+  License:  https://chromium.googlesource.com/chromium/src/+/main/LICENSE
+  Components: about:credits in any Chromium browser enumerates all attributions.
+
+ANGLE
+  License:  BSD 3-Clause
+  Copyright: © The ANGLE Project Authors
+  License:  https://chromium.googlesource.com/angle/angle/+/main/LICENSE
+
+FFmpeg (jellyfin-ffmpeg build)
+  License:  LGPL 2.1+ (with GPL components when --enable-gpl)
+  Copyright: © FFmpeg developers
+  Upstream: https://github.com/jellyfin/jellyfin-ffmpeg
+  License:  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+  Source on request: per LGPL 2.1 §6, source available at upstream.
+
+libx265
+  License:  GPL 2.0+
+  Copyright: © MulticoreWare Inc
+  Upstream: https://www.x265.org/
+  License:  https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+  Source on request: per GPL 2 §3, source available at upstream.
+  Patent notice: HEVC encoding may be subject to patent royalties in some
+  jurisdictions; obligations rest with the distributor of the encoded output.
+
+---
+
+For strict compliance (commercial distribution), the full license texts
+should be vendored alongside this NOTICE. URL-only attribution is common
+practice but technically thin under GPL 2 §1 / LGPL 2.1 §1.
