@@ -4,7 +4,7 @@
 //   ./ship.ts --dry      zip only, skip gh release + npm publish
 
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
@@ -21,20 +21,17 @@ for (const t of TARGETS) {
   if (!existsSync(join("dist", t))) die(`missing dist/${t} — run ./build.ts all first`);
 }
 
-const outDir = "release";
-await rm(outDir, { recursive: true, force: true });
-await mkdir(outDir, { recursive: true });
-
 const archives: string[] = [];
 for (const t of TARGETS) {
-  const archive = join(outDir, `havi-${t}.zip`);
+  const archive = join("dist", `havi-${t}.zip`);
+  await rm(archive, { force: true });
   console.error(`packing dist/${t} → ${archive}`);
   await packDir(join("dist", t), archive);
   archives.push(archive);
 }
 
 if (dryRun) {
-  console.error(`dry-run: ${archives.length} archives at ${outDir}/`);
+  console.error(`dry-run: ${archives.length} archives at dist/`);
   process.exit(0);
 }
 
@@ -42,7 +39,7 @@ console.error(`creating gh release ${tag}`);
 await run(["gh", "release", "create", tag, ...archives, "--title", tag, "--notes", `Release ${tag}`]);
 
 console.error("publishing to npm");
-await run(["npm", "publish"]);
+await run(["npm", "publish", "--access=public"]);
 
 console.error("done");
 

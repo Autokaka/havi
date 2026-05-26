@@ -1,5 +1,5 @@
 {
-  "name": "havi",
+  "name": "@autokaka/havi",
   "version": "0.1.0",
   "description": "Deterministic HTML-to-video renderer.",
   "type": "module",
