@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "postinstall": "./postinstall.js",
-    "build": "./build.ts"
+    "build": "./build.ts",
+    "ship": "./ship.ts"
   },
   "dependencies": {
     "fflate": "latest"
