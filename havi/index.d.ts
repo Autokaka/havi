@@ -37,8 +37,23 @@ export interface RenderResult {
   elapsedMs: number
 }
 
+export interface ProgressEvent {
+  frame: number
+  total: number
+}
+
+export interface ConsoleEvent {
+  level: "info" | "warn" | "error"
+  source: string
+  message: string
+}
+
 export interface Havi {
-  render(opts: RenderOpts): Promise<RenderResult>
+  render(
+    opts: RenderOpts,
+    onProgress?: (ev: ProgressEvent) => void,
+    onConsole?: (ev: ConsoleEvent) => void,
+  ): Promise<RenderResult>
 }
 
 export const havi: Havi
