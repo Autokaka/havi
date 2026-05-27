@@ -1,3 +1,5 @@
+// Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
+
 use std::os::windows::io::RawHandle;
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::HANDLE;

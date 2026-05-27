@@ -1,3 +1,5 @@
+// Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
+
 //! Subprocess entry — renderer/GPU/utility. Registers the same App.
 
 use havi_core::cef::app::{init_api, make_app};

@@ -1,3 +1,5 @@
+// Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
+
 #[cfg(feature = "napi-binding")]
 #[macro_use]
 extern crate napi_derive;

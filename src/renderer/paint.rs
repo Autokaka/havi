@@ -1,3 +1,5 @@
+// Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
+
 use crate::renderer::capture::{schedule_invalidate, schedule_step, Shared};
 use crate::renderer::host::decode_stego;
 use crate::ipc;

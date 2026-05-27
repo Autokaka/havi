@@ -1,3 +1,5 @@
+// Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
+
 //! NSApplication subclass conforming to CefAppProtocol — required before
 //! `cef_initialize` or it deadlocks.
 
