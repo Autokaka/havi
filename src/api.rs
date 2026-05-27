@@ -33,7 +33,8 @@ pub struct RenderHandle {
 }
 
 impl RenderHandle {
-    pub fn try_recv(&mut self) -> Option<Msg> { self.rx.try_recv().ok() }
+    pub fn pid(&self) -> u32 { self.child.id() }
+    pub fn try_recv(&mut self) -> Result<Msg, mpsc::TryRecvError> { self.rx.try_recv() }
     pub fn recv(&mut self) -> Option<Msg> { self.rx.recv().ok() }
 
     pub fn cancel(&mut self) {

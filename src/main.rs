@@ -5,6 +5,7 @@ use clap::Parser;
 use havi_core::cef::app::{init_api, make_app};
 use havi_core::cef::cdp::{Cdp, CdpObserver};
 use havi_core::cef::client::DetClient;
+use havi_core::cli::Cli;
 use havi_core::renderer::capture::{install_budget_listener, BrowserHandle, Shared, State};
 use havi_core::renderer::host::write_host;
 use havi_core::renderer::load::{advance_phase, DetLoadHandler, TolerantTimeoutTask, LOAD_TIMEOUT_MS};
@@ -12,30 +13,6 @@ use havi_core::renderer::paint::CaptureHandler;
 use havi_core::video::encoder;
 use havi_core::video::scheme::{self, HaviFrameFactory, SCHEME};
 use std::sync::{Arc, Mutex};
-
-#[derive(Parser, Debug)]
-#[command(name = "havi", about = "Deterministic HTML-to-video renderer.")]
-struct Cli {
-    /// file://, http(s)://, data: URI, or filesystem path (relative or absolute)
-    source: String,
-    #[arg(short = 'W', long, default_value_t = 1920)]
-    width: i32,
-    #[arg(short = 'H', long, default_value_t = 1080)]
-    height: i32,
-    #[arg(short, long, default_value_t = 30)]
-    fps: u32,
-    /// Duration in seconds.
-    #[arg(short = 't', long, default_value_t = 5)]
-    duration: u32,
-    #[arg(short, long, default_value = "out.mp4")]
-    out: String,
-    /// On load timeout, proceed with partial DOM instead of erroring out.
-    #[arg(long)]
-    tolerant: bool,
-    /// HTTP proxy rules (JSON array of {pattern, to, pass, block, status, body, headers}).
-    #[arg(long)]
-    proxy: Option<String>,
-}
 
 fn main() {
     #[cfg(target_os = "macos")]

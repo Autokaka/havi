@@ -6,6 +6,7 @@ extern crate napi_derive;
 
 pub mod api;
 pub mod cef;
+pub mod cli;
 pub mod common;
 pub mod proxy;
 pub mod renderer;

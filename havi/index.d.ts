@@ -48,12 +48,16 @@ export interface ConsoleEvent {
   message: string
 }
 
+export interface RenderInput {
+  options: RenderOpts
+  onProgress?: (ev: ProgressEvent) => void
+  onConsole?: (ev: ConsoleEvent) => void
+  signal?: AbortSignal
+}
+
 export interface Havi {
-  render(
-    opts: RenderOpts,
-    onProgress?: (ev: ProgressEvent) => void,
-    onConsole?: (ev: ConsoleEvent) => void,
-  ): Promise<RenderResult>
+  render(input: RenderInput): Promise<RenderResult>
+  renderHelp(): string
 }
 
 export const havi: Havi
