@@ -84,6 +84,27 @@ pub fn cleanup_session() {
     let _ = std::fs::remove_dir_all(scratch_dir());
 }
 
+pub fn install_parent_death_watcher() {
+    #[cfg(unix)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let initial_ppid = unsafe { libc::getppid() };
+            if initial_ppid <= 1 { return; }
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let cur = unsafe { libc::getppid() };
+                    if cur != initial_ppid || cur == 1 {
+                        cleanup_session();
+                        std::process::exit(0);
+                    }
+                }
+            });
+        });
+    }
+}
+
 pub fn install_cleanup_hooks() {
     let _ = scratch_dir();
     static ONCE: std::sync::Once = std::sync::Once::new();

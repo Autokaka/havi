@@ -49,11 +49,23 @@ fn build_host_html(target_url: &str, width: u32, height: u32) -> String {
       display: block;
       image-rendering: pixelated;
     }}
+    @keyframes havi_heartbeat {{
+      0% {{ opacity: 0.5; }}
+      100% {{ opacity: 1; }}
+    }}
+    #heartbeat {{
+      position: absolute; bottom: 0; right: 0;
+      width: 1px; height: 1px;
+      background: #000;
+      animation: havi_heartbeat 1s linear infinite;
+      pointer-events: none;
+    }}
   </style>
 </head>
 <body>
   <iframe id="target" src="{url}"></iframe>
   <canvas id="stego" width="{w}" height="1"></canvas>
+  <div id="heartbeat"></div>
   <script>{shim}</script>
 </body>
 </html>
