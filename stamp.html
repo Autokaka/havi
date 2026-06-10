@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 200px; height: 200px; background: transparent; overflow: hidden; }
+.badge {
+  width: 200px; height: 200px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(220, 50, 20, 0.88);
+  border: 5px solid #fff;
+  border-radius: 12px;
+  color: #fff;
+  font-family: 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 900;
+  gap: 2px;
+  text-shadow: 1px 1px 4px rgba(0,0,0,.6);
+}
+.icon { font-size: 28px; }
+.title { font-size: 30px; }
+.timer { font-size: 22px; font-variant-numeric: tabular-nums; font-family: monospace; }
+.sub { font-size: 13px; font-weight: 400; opacity: 0.9; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+<div class="badge">
+  <span class="icon">🔥</span>
+  <span class="title">DEMO</span>
+  <span class="timer" id="t">00:00.000</span>
+  <span class="sub">ROTATE TEST</span>
+</div>
+<script>
+const el = document.getElementById('t');
+const t0 = performance.now();
+function tick() {
+  const ms = performance.now() - t0;
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const mms = String(Math.floor(ms % 1000)).padStart(3, '0');
+  el.textContent = mm + ':' + ss + '.' + mms;
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>
