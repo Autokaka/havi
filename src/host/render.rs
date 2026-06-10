@@ -5,7 +5,7 @@ use crate::host::ipc::emit_evt;
 use crate::ipc::{Evt, RenderId};
 use crate::renderer::capture::{BrowserHandle, FrameHandle};
 use crate::video::encoder::EncoderHandle;
-use cef::{ImplBrowser, ImplBrowserHost, Registration};
+use cef::{quit_message_loop, ImplBrowser, ImplBrowserHost, Registration};
 use std::collections::HashMap;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
@@ -49,6 +49,7 @@ pub struct Host {
     queue: Mutex<std::collections::VecDeque<(RenderId, crate::api::RenderOpts)>>,
     max_parallel: usize,
     start_fn: Mutex<Option<StartFn>>,
+    single_shot: Mutex<Option<RenderId>>,
 }
 
 impl Host {
@@ -59,11 +60,38 @@ impl Host {
             queue: Mutex::new(std::collections::VecDeque::new()),
             max_parallel: max_parallel.max(1),
             start_fn: Mutex::new(None),
+            single_shot: Mutex::new(None),
         })
     }
 
     pub fn set_start_fn(&self, f: StartFn) {
         *self.start_fn.lock().expect("start_fn poisoned") = Some(f);
+    }
+
+    pub fn set_single_shot(&self, id: RenderId) {
+        *self.single_shot.lock().expect("single_shot poisoned") = Some(id);
+    }
+
+    fn maybe_quit_single_shot(&self, finished: RenderId) {
+        let target = *self.single_shot.lock().expect("single_shot poisoned");
+        if target == Some(finished)
+            && self.active_count() == 0
+            && self.queue.lock().expect("queue poisoned").is_empty()
+        {
+            quit_message_loop();
+        }
+    }
+
+    pub fn dom_ready_advance(self: &Arc<Self>) {
+        let target = {
+            let renders = self.renders.lock().expect("renders poisoned");
+            renders.values()
+                .find(|r| { let g = r.lock().expect("render poisoned"); g.tolerant && g.phase < 2 })
+                .cloned()
+        };
+        if let Some(render) = target {
+            crate::renderer::load::advance_phase(self, &render, None);
+        }
     }
 
     pub fn insert(&self, render: RenderRef) {
@@ -135,6 +163,7 @@ impl Host {
             }
         }
         self.drain_queue();
+        self.maybe_quit_single_shot(id);
     }
 
     pub fn cancel(self: &Arc<Self>, id: RenderId) {
@@ -154,6 +183,7 @@ impl Host {
             if let Some(h) = b.host() { h.close_browser(1); }
         }
         self.drain_queue();
+        self.maybe_quit_single_shot(id);
     }
 
     fn remove(&self, id: RenderId) -> Option<RenderRef> {

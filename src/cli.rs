@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser};
 #[command(name = "havi", about = "Deterministic HTML-to-video renderer.")]
 pub struct Cli {
     /// file://, http(s)://, data: URI, or filesystem path (relative or absolute)
-    pub source: String,
+    pub source: Option<String>,
     #[arg(short = 'W', long, default_value_t = 1920)]
     pub width: i32,
     #[arg(short = 'H', long, default_value_t = 1080)]
@@ -24,6 +24,9 @@ pub struct Cli {
     /// HTTP proxy rules (JSON array of {pattern, to, pass, block, status, body, headers}).
     #[arg(long)]
     pub proxy: Option<String>,
+    /// Daemon mode: read JSON commands on stdin, emit events on stdout.
+    #[arg(long)]
+    pub host: bool,
 }
 
 pub fn render_help() -> String {
