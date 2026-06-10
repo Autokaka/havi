@@ -91,6 +91,7 @@ wrap_render_handler! {
             report_progress(id, n + 1, total);
 
             if last {
+                r.capture.next_frame = n + 1;
                 r.done = true;
                 r.tx = None;
                 drop(r);

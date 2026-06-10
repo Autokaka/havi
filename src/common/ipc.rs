@@ -2,7 +2,6 @@
 
 use indicatif::ProgressBar;
 use serde::{Deserialize, Serialize};
-use std::io::{stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -17,8 +16,6 @@ static CONSOLE_CAPTURE: AtomicBool = AtomicBool::new(false);
 pub fn console_capture_enabled() -> bool { CONSOLE_CAPTURE.load(Ordering::Relaxed) }
 pub fn set_console_capture(on: bool) { CONSOLE_CAPTURE.store(on, Ordering::Relaxed); }
 
-// Shared progress bar (human mode). Logs route through bar.println() so they
-// stack above the bar without breaking its redraw.
 static BAR: OnceLock<Mutex<Option<ProgressBar>>> = OnceLock::new();
 pub fn set_progress_bar(bar: ProgressBar) {
     let _ = BAR.get_or_init(|| Mutex::new(None)).lock().map(|mut g| *g = Some(bar));
@@ -31,25 +28,30 @@ fn log_line(line: &str) {
     }
 }
 
+pub fn human_progress(done: u32, total: u32) {
+    let bar = bar_get_or_init(total);
+    bar.set_position(done as u64);
+    if done >= total { bar.finish(); }
+}
+
+fn bar_get_or_init(total: u32) -> ProgressBar {
+    static PB: OnceLock<ProgressBar> = OnceLock::new();
+    PB.get_or_init(|| {
+        let pb = ProgressBar::new(total as u64);
+        pb.set_style(
+            indicatif::ProgressStyle::with_template("[{bar:40}] {pos}/{len} ({percent}%)")
+                .unwrap().progress_chars("#-"),
+        );
+        set_progress_bar(pb.clone());
+        pb
+    }).clone()
+}
+
+pub fn human_log(line: &str) { log_line(line); }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Level { Info, Warn, Error }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum Msg {
-    Progress { frame: u32, total: u32 },
-    Console { level: Level, source: String, message: String },
-    Done {
-        frames: u32,
-        width: i32,
-        height: i32,
-        fps: u32,
-        out: String,
-        elapsed_ms: u64,
-    },
-    Error { message: String },
-}
 
 pub type RenderId = u64;
 
@@ -73,30 +75,14 @@ pub enum Evt {
     HostExit,
 }
 
-pub fn emit(msg: &Msg) {
-    if !enabled() { return; }
-    let Ok(line) = serde_json::to_string(msg) else { return };
-    let mut s = stdout().lock();
-    let _ = writeln!(s, "{line}");
-    let _ = s.flush();
-}
-
 pub fn error(message: &str) {
-    if enabled() {
-        emit(&Msg::Error { message: message.to_string() });
-    } else {
-        log_line(&format!("error: {message}"));
-    }
+    crate::host::ipc::emit_evt(&Evt::Error { id: 0, message: message.to_string() });
 }
 
 pub fn console(level: Level, source: &str, message: &str) {
-    if enabled() {
-        emit(&Msg::Console { level, source: source.to_string(), message: message.to_string() });
-    } else {
-        let _ = source;
-        let lvl = match level { Level::Info => "info", Level::Warn => "warn", Level::Error => "error" };
-        log_line(&format!("{lvl}: {message}"));
-    }
+    crate::host::ipc::emit_evt(&Evt::Console {
+        id: 0, level, source: source.to_string(), message: message.to_string(),
+    });
 }
 
 #[cfg(test)]
