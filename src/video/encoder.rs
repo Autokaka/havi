@@ -72,3 +72,27 @@ pub fn start_pipe(child: &mut Child) -> (SyncSender<Vec<u8>>, JoinHandle<()>) {
     });
     (tx, handle)
 }
+
+pub struct EncoderHandle {
+    pub pid: u32,
+    pub tx: SyncSender<Vec<u8>>,
+    pub child: Child,
+    pub pump: JoinHandle<()>,
+}
+
+pub fn start(width: i32, height: i32, fps: u32, out_path: &str) -> EncoderHandle {
+    let mut child = spawn(width, height, fps, out_path);
+    let pid = child.id();
+    let (tx, pump) = start_pipe(&mut child);
+    EncoderHandle { pid, tx, child, pump }
+}
+
+impl EncoderHandle {
+    pub fn finish(mut self) -> std::io::Result<std::process::ExitStatus> {
+        drop(self.tx);
+        let _ = self.pump.join();
+        let status = self.child.wait();
+        crate::sandbox::unregister_ffmpeg(self.pid);
+        status
+    }
+}

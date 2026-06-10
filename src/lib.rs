@@ -8,6 +8,7 @@ pub mod api;
 pub mod cef;
 pub mod cli;
 pub mod common;
+pub mod host;
 pub mod proxy;
 pub mod renderer;
 pub mod video;
@@ -16,4 +17,4 @@ pub mod video;
 pub mod napi;
 
 pub use common::{ipc, sandbox};
-pub use sandbox::{cleanup_session, install_cleanup_hooks, register_ffmpeg, sandbox_dir, scratch_dir, unregister_ffmpeg};
+pub use sandbox::{cleanup_session, install_cleanup_hooks, install_parent_death_watcher, register_ffmpeg, sandbox_dir, scratch_dir, unregister_ffmpeg};
