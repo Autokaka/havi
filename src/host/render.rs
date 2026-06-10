@@ -1,8 +1,11 @@
 // Created by Autokaka (qq1909698494@gmail.com) on 2026/06/11.
 
 use crate::cef::cdp::Cdp;
-use crate::ipc::RenderId;
+use crate::host::ipc::emit_evt;
+use crate::ipc::{Evt, RenderId};
 use crate::renderer::capture::{BrowserHandle, FrameHandle};
+use crate::video::encoder::EncoderHandle;
+use cef::{ImplBrowser, ImplBrowserHost, Registration};
 use std::collections::HashMap;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
@@ -28,22 +31,40 @@ pub struct Render {
     pub iframe: FrameHandle,
     pub cdp: Cdp,
     pub capture: CaptureState,
-    pub encoder_pid: Option<u32>,
+    pub encoder: Option<EncoderHandle>,
     pub tx: Option<SyncSender<Vec<u8>>>,
     pub done: bool,
+    pub errored: bool,
+    pub devtools: Option<Registration>,
     pub started_at: Instant,
 }
 
 pub type RenderRef = Arc<Mutex<Render>>;
 
-#[derive(Default)]
+pub type StartFn = Box<dyn Fn(&Arc<Host>, RenderId, crate::api::RenderOpts) + Send + Sync>;
+
 pub struct Host {
     renders: Mutex<HashMap<RenderId, RenderRef>>,
     by_browser: Mutex<HashMap<i32, RenderId>>,
+    queue: Mutex<std::collections::VecDeque<(RenderId, crate::api::RenderOpts)>>,
+    max_parallel: usize,
+    start_fn: Mutex<Option<StartFn>>,
 }
 
 impl Host {
-    pub fn new() -> Self { Self::default() }
+    pub fn new(max_parallel: usize) -> Arc<Self> {
+        Arc::new(Self {
+            renders: Mutex::new(HashMap::new()),
+            by_browser: Mutex::new(HashMap::new()),
+            queue: Mutex::new(std::collections::VecDeque::new()),
+            max_parallel: max_parallel.max(1),
+            start_fn: Mutex::new(None),
+        })
+    }
+
+    pub fn set_start_fn(&self, f: StartFn) {
+        *self.start_fn.lock().expect("start_fn poisoned") = Some(f);
+    }
 
     pub fn insert(&self, render: RenderRef) {
         let id = render.lock().expect("render poisoned").id;
@@ -63,13 +84,81 @@ impl Host {
         self.by_id(id)
     }
 
-    pub fn remove(&self, id: RenderId) -> Option<RenderRef> {
-        self.by_browser.lock().expect("by_browser poisoned").retain(|_, v| *v != id);
-        self.renders.lock().expect("renders poisoned").remove(&id)
-    }
-
     pub fn active_count(&self) -> usize {
         self.renders.lock().expect("renders poisoned").len()
+    }
+
+    pub fn submit(self: &Arc<Self>, id: RenderId, opts: crate::api::RenderOpts) {
+        let at_cap = self.active_count() >= self.max_parallel;
+        if at_cap {
+            self.queue.lock().expect("queue poisoned").push_back((id, opts));
+            return;
+        }
+        self.spawn_render(id, opts);
+    }
+
+    fn spawn_render(self: &Arc<Self>, id: RenderId, opts: crate::api::RenderOpts) {
+        let f = self.start_fn.lock().expect("start_fn poisoned");
+        if let Some(start) = f.as_ref() {
+            start(self, id, opts);
+        }
+    }
+
+    fn drain_queue(self: &Arc<Self>) {
+        let next = self.queue.lock().expect("queue poisoned").pop_front();
+        if let Some((id, opts)) = next {
+            self.spawn_render(id, opts);
+        }
+    }
+
+    pub fn finish(self: &Arc<Self>, id: RenderId) {
+        let Some(render) = self.remove(id) else { return };
+        let (encoder, out, frames, started, errored) = {
+            let mut r = render.lock().expect("render poisoned");
+            r.done = true;
+            r.tx = None;
+            (r.encoder.take(), r.out.clone(), r.capture.next_frame, r.started_at, r.errored)
+        };
+        if let Some(b) = render.lock().expect("render poisoned").browser.lock().expect("browser").take() {
+            if let Some(h) = b.host() { h.close_browser(1); }
+        }
+        let mut ok = true;
+        if let Some(enc) = encoder {
+            ok = enc.finish().map(|s| s.success()).unwrap_or(false);
+        }
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if !errored {
+            if ok {
+                emit_evt(&Evt::Done { id, out, frames, elapsed_ms });
+            } else {
+                emit_evt(&Evt::Error { id, message: "ffmpeg encoder failed".into() });
+            }
+        }
+        self.drain_queue();
+    }
+
+    pub fn cancel(self: &Arc<Self>, id: RenderId) {
+        let Some(render) = self.by_id(id) else { return };
+        {
+            let mut r = render.lock().expect("render poisoned");
+            r.errored = true;
+            r.done = true;
+            r.tx = None;
+        }
+        emit_evt(&Evt::Error { id, message: "cancelled".into() });
+        self.remove(id);
+        if let Some(enc) = render.lock().expect("render poisoned").encoder.take() {
+            let _ = enc.finish();
+        }
+        if let Some(b) = render.lock().expect("render poisoned").browser.lock().expect("browser").take() {
+            if let Some(h) = b.host() { h.close_browser(1); }
+        }
+        self.drain_queue();
+    }
+
+    fn remove(&self, id: RenderId) -> Option<RenderRef> {
+        self.by_browser.lock().expect("by_browser poisoned").retain(|_, v| *v != id);
+        self.renders.lock().expect("renders poisoned").remove(&id)
     }
 }
 
@@ -85,13 +174,14 @@ mod tests {
             iframe: Arc::new(Mutex::new(None)),
             cdp: Cdp::new(),
             capture: CaptureState { next_frame: 0, requested_ms: 0, budget_done: false, stuck_invalidates: 0 },
-            encoder_pid: None, tx: None, done: false, started_at: Instant::now(),
+            encoder: None, tx: None, done: false, errored: false, devtools: None,
+            started_at: Instant::now(),
         }))
     }
 
     #[test]
     fn route_by_browser_id() {
-        let host = Host::new();
+        let host = Host::new(4);
         host.insert(fake_render(1));
         host.insert(fake_render(2));
         host.bind_browser(101, 1);
@@ -103,7 +193,7 @@ mod tests {
 
     #[test]
     fn remove_clears_browser_binding() {
-        let host = Host::new();
+        let host = Host::new(4);
         host.insert(fake_render(1));
         host.bind_browser(101, 1);
         assert_eq!(host.active_count(), 1);
