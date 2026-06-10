@@ -5,7 +5,7 @@ use crate::cef::cdp::{Cdp, CdpObserver};
 use crate::cef::client::DetClient;
 use crate::host::ipc::emit_evt;
 use crate::host::render::{CaptureState, Host, Render};
-use crate::ipc::{Evt, RenderId};
+use crate::ipc::{Cmd, Evt, RenderId};
 use crate::renderer::capture::{install_budget_listener, BrowserHandle, FrameHandle};
 use crate::renderer::host::write_host;
 use crate::renderer::load::{DetLoadHandler, TolerantTimeoutTask, LOAD_TIMEOUT_MS};
@@ -93,4 +93,47 @@ fn start_render(host: &Arc<Host>, id: RenderId, opts: RenderOpts) {
 
     let mut tt = TolerantTimeoutTask::new(host.clone(), id);
     post_delayed_task(ThreadId::UI, Some(&mut tt), LOAD_TIMEOUT_MS);
+}
+
+wrap_task! {
+    pub struct CmdTask { pub host: Arc<Host>, pub cmd: Arc<Mutex<Option<Cmd>>> }
+    impl Task {
+        fn execute(&self) {
+            let Some(cmd) = self.cmd.lock().expect("cmd poisoned").take() else { return };
+            match cmd {
+                Cmd::Start { id, opts } => self.host.submit(id, opts),
+                Cmd::Cancel { id } => self.host.cancel(id),
+                Cmd::Shutdown => {
+                    emit_evt(&Evt::HostExit);
+                    quit_message_loop();
+                }
+            }
+        }
+    }
+}
+
+fn post_cmd(host: &Arc<Host>, cmd: Cmd) {
+    let mut task = CmdTask::new(host.clone(), Arc::new(Mutex::new(Some(cmd))));
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
+pub fn run(host: Arc<Host>) {
+    install_start_fn(&host);
+
+    {
+        let host = host.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().map_while(Result::ok) {
+                if let Some(cmd) = crate::host::ipc::parse_cmd(&line) {
+                    post_cmd(&host, cmd);
+                }
+            }
+            post_cmd(&host, Cmd::Shutdown);
+        });
+    }
+
+    emit_evt(&Evt::HostReady);
+    run_message_loop();
 }
