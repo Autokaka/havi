@@ -7,7 +7,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 
 #[cfg_attr(feature = "napi-binding", napi(object))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RenderOpts {
     pub source: String,
     pub out: Option<String>,

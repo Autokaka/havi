@@ -51,6 +51,28 @@ pub enum Msg {
     Error { message: String },
 }
 
+pub type RenderId = u64;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum Cmd {
+    Start { id: RenderId, opts: crate::api::RenderOpts },
+    Cancel { id: RenderId },
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "evt", rename_all = "snake_case")]
+pub enum Evt {
+    HostReady,
+    Started { id: RenderId },
+    Progress { id: RenderId, frame: u32, total: u32 },
+    Console { id: RenderId, level: Level, source: String, message: String },
+    Done { id: RenderId, out: String, frames: u32, elapsed_ms: u64 },
+    Error { id: RenderId, message: String },
+    HostExit,
+}
+
 pub fn emit(msg: &Msg) {
     if !enabled() { return; }
     let Ok(line) = serde_json::to_string(msg) else { return };
@@ -74,5 +96,45 @@ pub fn console(level: Level, source: &str, message: &str) {
         let _ = source;
         let lvl = match level { Level::Info => "info", Level::Warn => "warn", Level::Error => "error" };
         log_line(&format!("{lvl}: {message}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmd_roundtrip_start() {
+        let opts = crate::api::RenderOpts {
+            source: "a.html".into(),
+            out: Some("o.mp4".into()),
+            width: Some(800), height: Some(600),
+            fps: Some(30), duration: Some(5),
+            tolerant: Some(false), proxy: None,
+        };
+        let cmd = Cmd::Start { id: 7, opts };
+        let line = serde_json::to_string(&cmd).unwrap();
+        assert!(line.contains(r#""cmd":"start""#));
+        assert!(line.contains(r#""id":7"#));
+        let back: Cmd = serde_json::from_str(&line).unwrap();
+        matches!(back, Cmd::Start { id: 7, .. });
+    }
+
+    #[test]
+    fn evt_roundtrip_done() {
+        let evt = Evt::Done { id: 3, out: "o.mp4".into(), frames: 150, elapsed_ms: 4200 };
+        let line = serde_json::to_string(&evt).unwrap();
+        assert!(line.contains(r#""evt":"done""#));
+        let back: Evt = serde_json::from_str(&line).unwrap();
+        if let Evt::Done { id, frames, .. } = back {
+            assert_eq!(id, 3);
+            assert_eq!(frames, 150);
+        } else { panic!("wrong variant"); }
+    }
+
+    #[test]
+    fn evt_host_ready_tagless() {
+        let line = serde_json::to_string(&Evt::HostReady).unwrap();
+        assert_eq!(line, r#"{"evt":"host_ready"}"#);
     }
 }
