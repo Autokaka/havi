@@ -42,6 +42,30 @@ impl Cdp {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn handlers_isolated_per_cdp() {
+        let a = Cdp::new();
+        let b = Cdp::new();
+        let a_hits = Arc::new(AtomicU32::new(0));
+        let b_hits = Arc::new(AtomicU32::new(0));
+        let ac = a_hits.clone();
+        let bc = b_hits.clone();
+        a.on_event("Foo.bar", move |_| { ac.fetch_add(1, Ordering::SeqCst); });
+        b.on_event("Foo.bar", move |_| { bc.fetch_add(1, Ordering::SeqCst); });
+
+        for (m, h) in a.0.event_handlers.lock().unwrap().iter() {
+            if m == "Foo.bar" { h(&[]); }
+        }
+        assert_eq!(a_hits.load(Ordering::SeqCst), 1);
+        assert_eq!(b_hits.load(Ordering::SeqCst), 0);
+    }
+}
+
 wrap_dev_tools_message_observer! {
     pub struct CdpObserver {
         pub cdp: Cdp,
