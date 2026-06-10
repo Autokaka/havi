@@ -17,7 +17,8 @@ wrap_render_handler! {
     impl RenderHandler {
         fn view_rect(&self, browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
             let (Some(browser), Some(rect)) = (browser, rect) else { return };
-            let Some(render) = self.host.by_browser(browser.identifier()) else { return };
+            let Some(render) = self.host.by_browser(browser.identifier())
+                .or_else(|| self.host.creating()) else { return };
             let r = render.lock().expect("render poisoned");
             rect.x = 0;
             rect.y = 0;

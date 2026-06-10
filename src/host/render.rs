@@ -50,6 +50,7 @@ pub struct Host {
     max_parallel: usize,
     start_fn: Mutex<Option<StartFn>>,
     single_shot: Mutex<Option<RenderId>>,
+    creating: Mutex<Option<RenderRef>>,
 }
 
 impl Host {
@@ -61,7 +62,22 @@ impl Host {
             max_parallel: max_parallel.max(1),
             start_fn: Mutex::new(None),
             single_shot: Mutex::new(None),
+            creating: Mutex::new(None),
         })
+    }
+
+    // CEF calls view_rect during browser creation, before browser_id is known
+    // to bind. Serialized on the UI thread, so one pending render at a time.
+    pub fn set_creating(&self, render: RenderRef) {
+        *self.creating.lock().expect("creating poisoned") = Some(render);
+    }
+
+    pub fn clear_creating(&self) {
+        *self.creating.lock().expect("creating poisoned") = None;
+    }
+
+    pub fn creating(&self) -> Option<RenderRef> {
+        self.creating.lock().expect("creating poisoned").clone()
     }
 
     pub fn set_start_fn(&self, f: StartFn) {

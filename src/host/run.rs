@@ -71,6 +71,7 @@ fn start_render(host: &Arc<Host>, id: RenderId, opts: RenderOpts) {
     let mut browser_settings = BrowserSettings::default();
     browser_settings.windowless_frame_rate = 240;
     browser_settings.background_color = 0;
+    host.set_creating(render.clone());
     let b = browser_host_create_browser_sync(
         Some(&window_info),
         Some(&mut client),
@@ -88,6 +89,7 @@ fn start_render(host: &Arc<Host>, id: RenderId, opts: RenderOpts) {
     render.lock().expect("render poisoned").devtools = reg;
     *browser.lock().expect("browser poisoned") = Some(b);
     host.bind_browser(browser_id, id);
+    host.clear_creating();
 
     emit_evt(&Evt::Started { id });
 
