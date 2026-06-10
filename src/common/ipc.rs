@@ -117,7 +117,7 @@ mod tests {
         assert!(line.contains(r#""cmd":"start""#));
         assert!(line.contains(r#""id":7"#));
         let back: Cmd = serde_json::from_str(&line).unwrap();
-        matches!(back, Cmd::Start { id: 7, .. });
+        assert!(matches!(back, Cmd::Start { id: 7, .. }));
     }
 
     #[test]
