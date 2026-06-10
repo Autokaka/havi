@@ -1,10 +1,13 @@
 // Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
 
-use crate::ipc::{self, Msg};
-use std::io::{BufRead, BufReader};
+use crate::ipc::{Cmd, Evt, RenderId};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(feature = "napi-binding", napi(object))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -27,63 +30,84 @@ impl RenderOpts {
     pub fn duration_or(&self) -> u32 { self.duration.unwrap_or(5) }
 }
 
-pub struct RenderHandle {
-    child: Child,
-    rx: mpsc::Receiver<Msg>,
+pub struct HostClient {
+    _child: Child,
+    stdin: Mutex<ChildStdin>,
+    next_id: AtomicU64,
+    pending: Arc<Mutex<HashMap<RenderId, Sender<Evt>>>>,
 }
 
-impl RenderHandle {
-    pub fn pid(&self) -> u32 { self.child.id() }
-    pub fn try_recv(&mut self) -> Result<Msg, mpsc::TryRecvError> { self.rx.try_recv() }
-    pub fn recv(&mut self) -> Option<Msg> { self.rx.recv().ok() }
+impl HostClient {
+    pub fn spawn() -> std::io::Result<Arc<Self>> {
+        let bin = locate_bin()?;
+        let mut child = Command::new(bin)
+            .arg("--host")
+            .env(crate::ipc::ENV_FLAG, "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
 
-    pub fn cancel(&mut self) {
-        #[cfg(unix)]
+        let stdin = child.stdin.take().expect("host stdin");
+        let stdout = child.stdout.take().expect("host stdout");
+        let pending: Arc<Mutex<HashMap<RenderId, Sender<Evt>>>> = Arc::new(Mutex::new(HashMap::new()));
+
         {
-            let pid = i32::try_from(self.child.id()).unwrap_or(0);
-            if pid > 0 { unsafe { libc::kill(pid, libc::SIGTERM); } }
+            let pending = pending.clone();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    let Ok(evt) = serde_json::from_str::<Evt>(&line) else { continue };
+                    let id = match &evt {
+                        Evt::Started { id } | Evt::Progress { id, .. }
+                        | Evt::Console { id, .. } | Evt::Done { id, .. }
+                        | Evt::Error { id, .. } => *id,
+                        Evt::HostReady | Evt::HostExit => continue,
+                    };
+                    let tx = pending.lock().expect("pending poisoned").get(&id).cloned();
+                    if let Some(tx) = tx { let _ = tx.send(evt); }
+                }
+                let mut map = pending.lock().expect("pending poisoned");
+                for (id, tx) in map.drain() {
+                    let _ = tx.send(Evt::Error { id, message: "host process exited".into() });
+                }
+            });
         }
-        #[cfg(windows)]
-        { let _ = self.child.kill(); }
+
+        Ok(Arc::new(Self {
+            _child: child,
+            stdin: Mutex::new(stdin),
+            next_id: AtomicU64::new(1),
+            pending,
+        }))
     }
 
-    pub fn wait(mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.child.wait()
-    }
-}
-
-pub fn spawn(opts: RenderOpts) -> std::io::Result<RenderHandle> {
-    let bin = locate_bin()?;
-    let mut cmd = Command::new(bin);
-    cmd.arg(&opts.source)
-        .args(["-W", &opts.width_or().to_string()])
-        .args(["-H", &opts.height_or().to_string()])
-        .args(["-f", &opts.fps_or().to_string()])
-        .args(["-t", &opts.duration_or().to_string()])
-        .args(["-o", opts.out_or()])
-        .env(ipc::ENV_FLAG, "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if opts.tolerant.unwrap_or(false) { cmd.arg("--tolerant"); }
-    if let Some(rules) = &opts.proxy {
-        let json = serde_json::to_string(rules)
+    pub fn begin(&self, opts: RenderOpts) -> std::io::Result<(RenderId, Receiver<Evt>)> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        self.pending.lock().expect("pending poisoned").insert(id, tx);
+        let cmd = Cmd::Start { id, opts };
+        let line = serde_json::to_string(&cmd)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-        cmd.arg("--proxy").arg(json);
+        let mut w = self.stdin.lock().expect("stdin poisoned");
+        writeln!(w, "{line}")?;
+        w.flush()?;
+        Ok((id, rx))
     }
-    let mut child = cmd.spawn()?;
 
-    let stdout = child.stdout.take().expect("stdout piped");
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            if let Ok(msg) = serde_json::from_str::<Msg>(&line) {
-                if tx.send(msg).is_err() { break; }
+    pub fn cancel(&self, id: RenderId) {
+        let cmd = Cmd::Cancel { id };
+        if let Ok(line) = serde_json::to_string(&cmd) {
+            if let Ok(mut w) = self.stdin.lock() {
+                let _ = writeln!(w, "{line}");
+                let _ = w.flush();
             }
         }
-    });
+    }
 
-    Ok(RenderHandle { child, rx })
+    pub fn forget(&self, id: RenderId) {
+        self.pending.lock().expect("pending poisoned").remove(&id);
+    }
 }
 
 fn locate_bin() -> std::io::Result<PathBuf> {

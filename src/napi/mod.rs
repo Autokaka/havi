@@ -1,10 +1,21 @@
 // Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
 
+use crate::api::HostClient;
+use crate::ipc::Evt;
 use crate::{api, cli, ipc};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+
+static HOST: OnceLock<Arc<HostClient>> = OnceLock::new();
+
+fn host() -> Result<Arc<HostClient>> {
+    if let Some(h) = HOST.get() { return Ok(h.clone()); }
+    let h = HostClient::spawn().map_err(|e| Error::from_reason(e.to_string()))?;
+    let _ = HOST.set(h.clone());
+    Ok(HOST.get().cloned().unwrap_or(h))
+}
 
 #[napi]
 pub fn render_help() -> String {
@@ -40,7 +51,7 @@ type ConsoleTsfn = ThreadsafeFunction<ConsoleEvent, (), ConsoleEvent, Status, fa
 #[derive(Default)]
 struct AbortState {
     flag: AtomicBool,
-    pid: AtomicU32,
+    id: AtomicU64,
 }
 
 pub struct RenderInput {
@@ -63,8 +74,10 @@ impl FromNapiValue for RenderInput {
             let state = abort_state.clone();
             s.on_abort(move || {
                 state.flag.store(true, Ordering::SeqCst);
-                let p = state.pid.load(Ordering::SeqCst);
-                if p > 0 { cancel_pid(p); }
+                let id = state.id.load(Ordering::SeqCst);
+                if id > 0 {
+                    if let Some(h) = HOST.get() { h.cancel(id); }
+                }
             });
         }
         Ok(Self { options, on_progress, on_console, abort_state })
@@ -83,26 +96,29 @@ pub fn render<'env>(
     env: &'env Env,
     input: RenderInput,
 ) -> Result<PromiseRaw<'env, RenderResult>> {
-    let mut handle = api::spawn(input.options).map_err(|e| Error::from_reason(e.to_string()))?;
-    let pid = handle.pid();
-    input.abort_state.pid.store(pid, Ordering::SeqCst);
+    let client = host()?;
+    let opts = input.options;
+    let (rw, rh, rfps) = (opts.width_or(), opts.height_or(), opts.fps_or());
+    let (id, rx) = client.begin(opts).map_err(|e| Error::from_reason(e.to_string()))?;
+    input.abort_state.id.store(id, Ordering::SeqCst);
     if input.abort_state.flag.load(Ordering::SeqCst) {
-        cancel_pid(pid);
+        client.cancel(id);
     }
-    let abort_state = input.abort_state.clone();
+    let _abort_state = input.abort_state.clone();
     let on_progress = input.on_progress;
     let on_console = input.on_console;
+    let client2 = client.clone();
 
     env.spawn_future(async move {
-        loop {
-            let msg = napi::tokio::task::block_in_place(|| handle.recv());
-            match msg {
-                Some(ipc::Msg::Progress { frame, total }) => {
+        let result = loop {
+            let evt = napi::tokio::task::block_in_place(|| rx.recv().ok());
+            match evt {
+                Some(Evt::Progress { frame, total, .. }) => {
                     if let Some(cb) = &on_progress {
                         cb.call(ProgressEvent { frame, total }, ThreadsafeFunctionCallMode::NonBlocking);
                     }
                 }
-                Some(ipc::Msg::Console { level, source, message }) => {
+                Some(Evt::Console { level, source, message, .. }) => {
                     if let Some(cb) = &on_console {
                         let level = match level {
                             ipc::Level::Info => "info",
@@ -112,32 +128,21 @@ pub fn render<'env>(
                         cb.call(ConsoleEvent { level, source, message }, ThreadsafeFunctionCallMode::NonBlocking);
                     }
                 }
-                Some(ipc::Msg::Done { frames, width, height, fps, out, elapsed_ms }) => {
-                    return Ok(RenderResult {
-                        frames, width, height, fps, out,
+                Some(Evt::Started { .. }) => {}
+                Some(Evt::Done { frames, out, elapsed_ms, .. }) => {
+                    break Ok(RenderResult {
+                        frames,
+                        width: rw, height: rh, fps: rfps,
+                        out,
                         elapsed_ms: u32::try_from(elapsed_ms).unwrap_or(u32::MAX),
                     });
                 }
-                Some(ipc::Msg::Error { message }) => return Err(Error::from_reason(message)),
-                None => {
-                    if abort_state.flag.load(Ordering::SeqCst) {
-                        return Err(Error::from_reason("aborted"));
-                    }
-                    return Err(Error::from_reason("render exited without done"));
-                }
+                Some(Evt::Error { message, .. }) => break Err(Error::from_reason(message)),
+                Some(Evt::HostReady) | Some(Evt::HostExit) => {}
+                None => break Err(Error::from_reason("render channel closed")),
             }
-        }
+        };
+        client2.forget(id);
+        result
     })
-}
-
-fn cancel_pid(pid: u32) {
-    #[cfg(unix)]
-    {
-        let pid_i32 = i32::try_from(pid).unwrap_or(0);
-        if pid_i32 > 0 { unsafe { libc::kill(pid_i32, libc::SIGTERM); } }
-    }
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
-    }
 }
