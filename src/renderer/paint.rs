@@ -61,6 +61,7 @@ wrap_render_handler! {
                     let frame = r.capture.next_frame;
                     let ms = r.capture.requested_ms;
                     r.done = true;
+                    r.errored = true;
                     r.tx = None;
                     drop(r);
                     emit_evt(&Evt::Error {

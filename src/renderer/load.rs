@@ -32,6 +32,7 @@ wrap_task! {
             if render.lock().expect("render poisoned").phase >= 2 { return; }
             let tolerant = render.lock().expect("render poisoned").tolerant;
             if !tolerant {
+                render.lock().expect("render poisoned").errored = true;
                 emit_evt(&Evt::Error {
                     id: self.id,
                     message: format!("load timeout after {LOAD_TIMEOUT_MS}ms (pass tolerant to proceed anyway)"),
@@ -119,9 +120,9 @@ wrap_load_handler! {
             error_text: Option<&CefString>,
             failed_url: Option<&CefString>,
         ) {
-            let id = browser.and_then(|b| self.host.by_browser(b.identifier()))
-                .map(|r| r.lock().expect("render poisoned").id)
-                .unwrap_or(0);
+            let Some(browser) = browser else { return };
+            let Some(render) = self.host.by_browser(browser.identifier()) else { return };
+            let id = render.lock().expect("render poisoned").id;
             let msg = format!(
                 "load failed code={:?} text={} url={}",
                 error_code,
@@ -129,6 +130,10 @@ wrap_load_handler! {
                 failed_url.map(|s| s.to_string()).unwrap_or_default(),
             );
             emit_evt(&Evt::Error { id, message: msg });
+            if _frame.map(|f| f.is_main() != 0).unwrap_or(false) {
+                render.lock().expect("render poisoned").errored = true;
+                self.host.finish(id);
+            }
         }
     }
 }
