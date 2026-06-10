@@ -110,6 +110,15 @@ impl HostClient {
     }
 }
 
+impl Drop for HostClient {
+    fn drop(&mut self) {
+        if let Ok(mut w) = self.stdin.lock() {
+            let _ = writeln!(w, r#"{{"cmd":"shutdown"}}"#);
+            let _ = w.flush();
+        }
+    }
+}
+
 fn locate_bin() -> std::io::Result<PathBuf> {
     let name = if cfg!(windows) { "havi.exe" } else { "havi" };
     if let Some(dir) = self_dylib_dir() {
