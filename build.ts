@@ -19,10 +19,6 @@ import { fileURLToPath } from "node:url";
 const APP = "havi";
 const LIB = "havi_core";
 const IDENT = "havi-codesign";
-// Pins — resolved to latest at startup by resolveLatestPins().
-let CEF_CRATE_VERSION = "";
-let NODE_AV_TAG = "";
-let FFMPEG_VER = "";
 
 type Target = { tag: string; triple: string; plat: string; arch: string };
 
@@ -45,7 +41,7 @@ if (platform() !== "darwin") {
 }
 
 const { targets, profile } = parseArgs();
-await resolveLatestPins();
+const { cef: CEF_CRATE_VERSION, nodeAv: NODE_AV_TAG, ffmpeg: FFMPEG_VER } = await resolveLatestPins();
 await ensureTools();
 await updateDeps();
 await prefetchFfmpegs(targets);
@@ -97,24 +93,25 @@ async function tryRun(args: string[]) {
 }
 
 // Resolve cef / node-av / ffmpeg pins to latest. Required — die if unresolved.
-async function resolveLatestPins() {
-  const cef = await tryFetchJson("https://crates.io/api/v1/crates/cef");
-  const cv = cef?.crate?.max_stable_version ?? cef?.crate?.newest_version;
-  if (typeof cv === "string") CEF_CRATE_VERSION = cv.split("+")[0]!; // drop +build metadata
+async function resolveLatestPins(): Promise<{ cef: string; nodeAv: string; ffmpeg: string }> {
+  const cefJson = await tryFetchJson("https://crates.io/api/v1/crates/cef");
+  const cv = cefJson?.crate?.max_stable_version ?? cefJson?.crate?.newest_version;
+  const cef = typeof cv === "string" ? cv.split("+")[0]! : ""; // drop +build metadata
 
   const rel = await tryFetchJson("https://api.github.com/repos/seydx/node-av/releases/latest");
-  if (typeof rel?.tag_name === "string") NODE_AV_TAG = rel.tag_name;
+  const nodeAv = typeof rel?.tag_name === "string" ? rel.tag_name : "";
   // ffmpeg version = exact token node-av ships in its jellyfin asset name.
-  const names: string[] = (rel?.assets ?? []).map((a: { name?: string }) => a?.name ?? "");
-  for (const n of names) {
-    const m = n.match(/^ffmpeg-(.+)-(?:macos|linux|win)-(?:arm64|x64)-jellyfin\.zip$/);
-    if (m) { FFMPEG_VER = m[1]!; break; }
+  let ffmpeg = "";
+  for (const a of (rel?.assets ?? []) as Array<{ name?: string }>) {
+    const m = (a?.name ?? "").match(/^ffmpeg-(.+)-(?:macos|linux|win)-(?:arm64|x64)-jellyfin\.zip$/);
+    if (m) { ffmpeg = m[1]!; break; }
   }
 
-  if (!CEF_CRATE_VERSION) die("could not resolve cef version (crates.io unreachable?)");
-  if (!NODE_AV_TAG) die("could not resolve node-av release (github unreachable?)");
-  if (!FFMPEG_VER) die("could not resolve ffmpeg version from node-av assets");
-  console.error(`pins → cef ${CEF_CRATE_VERSION}, node-av ${NODE_AV_TAG}, ffmpeg ${FFMPEG_VER}`);
+  if (!cef) die("could not resolve cef version (crates.io unreachable?)");
+  if (!nodeAv) die("could not resolve node-av release (github unreachable?)");
+  if (!ffmpeg) die("could not resolve ffmpeg version from node-av assets");
+  console.error(`pins → cef ${cef}, node-av ${nodeAv}, ffmpeg ${ffmpeg}`);
+  return { cef, nodeAv, ffmpeg };
 }
 
 async function tryFetchJson(url: string): Promise<any | null> {
