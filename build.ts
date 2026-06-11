@@ -5,6 +5,8 @@
 //   ./build.ts <target>              one target (darwin-arm64 | linux-arm64 | linux-x64 | win32-x64)
 //   ./build.ts <target|all> debug    debug profile
 //   ./build.ts debug                 current host, debug
+// Always refreshes deps to latest before building (best-effort).
+// CEF + ffmpeg are pinned binaries — bump their constants by hand.
 // Outputs: dist/<platform>-<arch>/
 
 import { $ } from "bun";
@@ -44,6 +46,7 @@ if (platform() !== "darwin") {
 
 const { targets, profile } = parseArgs();
 await ensureTools();
+await updateDeps();
 await prefetchFfmpegs(targets);
 
 const outputs: Array<[string, string]> = [];
@@ -72,6 +75,23 @@ function parseArgs(): { targets: Target[]; profile: "release" | "debug" } {
     chosen = [t];
   }
   return { targets: (chosen ?? [HOST_TARGET]) as Target[], profile };
+}
+
+async function updateDeps() {
+  console.error("updating deps to latest");
+  if (!(await which("cargo-upgrade"))) await tryRun(["cargo", "install", "cargo-edit"]);
+  await tryRun(["cargo", "upgrade", "--incompatible", "--exclude", "cef"]);
+  await tryRun(["cargo", "update"]);
+  await tryRun(["cargo", "update", "-p", "cef", "--precise", CEF_CRATE_VERSION]); // re-pin cef
+  await tryRun(["bun", "update"]);
+}
+
+async function tryRun(args: string[]) {
+  try {
+    await run(args);
+  } catch (e) {
+    console.error(`skip (non-fatal): ${args.join(" ")} → ${e}`);
+  }
 }
 
 async function buildMacos(t: Target, profile: string): Promise<string> {

@@ -78,55 +78,68 @@ impl TypeName for RenderInput {
 
 impl ValidateNapiValue for RenderInput {}
 
+const MAX_ATTEMPTS: u32 = 3;
+
 #[napi]
 pub fn render<'env>(
     env: &'env Env,
     input: RenderInput,
 ) -> Result<PromiseRaw<'env, RenderResult>> {
-    let mut handle = api::spawn(input.options).map_err(|e| Error::from_reason(e.to_string()))?;
-    let pid = handle.pid();
-    input.abort_state.pid.store(pid, Ordering::SeqCst);
-    if input.abort_state.flag.load(Ordering::SeqCst) {
-        cancel_pid(pid);
-    }
+    let options = input.options;
     let abort_state = input.abort_state.clone();
     let on_progress = input.on_progress;
     let on_console = input.on_console;
 
     env.spawn_future(async move {
-        loop {
-            let msg = napi::tokio::task::block_in_place(|| handle.recv());
-            match msg {
-                Some(ipc::Msg::Progress { frame, total }) => {
-                    if let Some(cb) = &on_progress {
-                        cb.call(ProgressEvent { frame, total }, ThreadsafeFunctionCallMode::NonBlocking);
+        let mut last_err = String::from("render failed");
+        for _ in 0..MAX_ATTEMPTS {
+            if abort_state.flag.load(Ordering::SeqCst) {
+                return Err(Error::from_reason("aborted"));
+            }
+            let mut handle = api::spawn(options.clone()).map_err(|e| Error::from_reason(e.to_string()))?;
+            let pid = handle.pid();
+            abort_state.pid.store(pid, Ordering::SeqCst);
+            if abort_state.flag.load(Ordering::SeqCst) { cancel_pid(pid); }
+
+            let outcome: std::result::Result<RenderResult, String> = loop {
+                match napi::tokio::task::block_in_place(|| handle.recv()) {
+                    Some(ipc::Msg::Progress { frame, total }) => {
+                        if let Some(cb) = &on_progress {
+                            cb.call(ProgressEvent { frame, total }, ThreadsafeFunctionCallMode::NonBlocking);
+                        }
                     }
-                }
-                Some(ipc::Msg::Console { level, source, message }) => {
-                    if let Some(cb) = &on_console {
-                        let level = match level {
-                            ipc::Level::Info => "info",
-                            ipc::Level::Warn => "warn",
-                            ipc::Level::Error => "error",
-                        }.to_string();
-                        cb.call(ConsoleEvent { level, source, message }, ThreadsafeFunctionCallMode::NonBlocking);
+                    Some(ipc::Msg::Console { level, source, message }) => {
+                        if let Some(cb) = &on_console {
+                            let level = match level {
+                                ipc::Level::Info => "info",
+                                ipc::Level::Warn => "warn",
+                                ipc::Level::Error => "error",
+                            }.to_string();
+                            cb.call(ConsoleEvent { level, source, message }, ThreadsafeFunctionCallMode::NonBlocking);
+                        }
                     }
+                    Some(ipc::Msg::Done { frames, width, height, fps, out, elapsed_ms }) => {
+                        break Ok(RenderResult {
+                            frames, width, height, fps, out,
+                            elapsed_ms: u32::try_from(elapsed_ms).unwrap_or(u32::MAX),
+                        });
+                    }
+                    Some(ipc::Msg::Error { message }) => break Err(message),
+                    None => break Err("render exited without done".into()),
                 }
-                Some(ipc::Msg::Done { frames, width, height, fps, out, elapsed_ms }) => {
-                    return Ok(RenderResult {
-                        frames, width, height, fps, out,
-                        elapsed_ms: u32::try_from(elapsed_ms).unwrap_or(u32::MAX),
-                    });
-                }
-                Some(ipc::Msg::Error { message }) => return Err(Error::from_reason(message)),
-                None => {
+            };
+
+            match outcome {
+                Ok(r) => return Ok(r),
+                Err(msg) => {
                     if abort_state.flag.load(Ordering::SeqCst) {
                         return Err(Error::from_reason("aborted"));
                     }
-                    return Err(Error::from_reason("render exited without done"));
+                    last_err = msg;
                 }
             }
         }
+        Err(Error::from_reason(format!("render failed after {MAX_ATTEMPTS} attempts: {last_err}")))
     })
 }
 

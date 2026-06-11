@@ -26,6 +26,10 @@ pub struct State {
 
 pub type Shared = Arc<Mutex<State>>;
 
+// Wall-clock guard per frame. If a frame produces no matching paint in this
+// window (e.g. virtualTimeBudgetExpired never fires), abort instead of hanging.
+const FRAME_TIMEOUT_MS: i64 = 5000;
+
 pub fn pause_virtual_time(cdp: &Cdp, host: &BrowserHost) {
     cdp.send(host, "Emulation.setVirtualTimePolicy", r#"{"policy":"pause"}"#);
 }
@@ -50,11 +54,11 @@ fn tick_iframe(frame: &Frame, ms: u32) {
 }
 
 pub fn step_frame(state: &Shared) {
-    let (cdp, browser, iframe, budget_ms, ms) = {
+    let (cdp, browser, iframe, budget_ms, ms, frame) = {
         let cap = state.lock().expect("state poisoned");
         if cap.done { return; }
         let ms = (((cap.next_frame + 1) as f64) * cap.frame_ms).floor() as u32;
-        (cap.cdp.clone(), cap.browser.clone(), cap.iframe.clone(), cap.frame_ms as u32, ms)
+        (cap.cdp.clone(), cap.browser.clone(), cap.iframe.clone(), cap.frame_ms as u32, ms, cap.next_frame)
     };
 
     let Some(host) = browser.lock().expect("browser poisoned").as_ref().and_then(|b| b.host()) else {
@@ -73,6 +77,28 @@ pub fn step_frame(state: &Shared) {
         tick_iframe(f, ms);
     }
     advance_virtual_time(&cdp, &host, budget_ms);
+    schedule_frame_watchdog(state, frame);
+}
+
+wrap_task! {
+    pub struct FrameWatchdog { pub state: Shared, pub frame: u32 }
+    impl Task {
+        fn execute(&self) {
+            let mut cap = self.state.lock().expect("state poisoned");
+            if cap.done || cap.next_frame > self.frame { return; }
+            let ms = cap.requested_ms;
+            cap.done = true;
+            cap.tx = None;
+            drop(cap);
+            crate::ipc::error(&format!("frame {} timeout: no paint in {FRAME_TIMEOUT_MS}ms (ms={ms})", self.frame));
+            quit_message_loop();
+        }
+    }
+}
+
+fn schedule_frame_watchdog(state: &Shared, frame: u32) {
+    let mut task = FrameWatchdog::new(state.clone(), frame);
+    post_delayed_task(ThreadId::UI, Some(&mut task), FRAME_TIMEOUT_MS);
 }
 
 wrap_task! {
