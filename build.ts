@@ -1,11 +1,6 @@
 #!/usr/bin/env bun
-// Build distributables from a macOS host.
-//   ./build.ts                       current host (darwin-arm64), release
-//   ./build.ts all                   every supported target
-//   ./build.ts <target>              one target (darwin-arm64 | linux-arm64 | linux-x64 | win32-x64)
-//   ./build.ts <target|all> debug    debug profile
-//   ./build.ts debug                 current host, debug
-// Resolves cef + ffmpeg + cargo deps to latest before building (best-effort).
+// Build distributables from a macOS host. See --help for flags.
+// Pins (cef/node-av/ffmpeg) come from build-pins.json; --update refreshes them.
 // Outputs: dist/<platform>-<arch>/
 
 import { $ } from "bun";
@@ -15,6 +10,7 @@ import { chmod, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/prom
 import { homedir, platform } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 const APP = "havi";
 const LIB = "havi_core";
@@ -30,7 +26,7 @@ const TARGETS: Target[] = [
   { tag: "linux-x64", triple: "x86_64-unknown-linux-gnu", plat: "linux", arch: "x64" },
   { tag: "win32-x64", triple: "x86_64-pc-windows-msvc", plat: "win32", arch: "x64" },
 ];
-const HOST_TARGET = TARGETS[0];
+const HOST_TARGET = TARGETS[0]!;
 const PRUNED_HELPERS = ["havi Helper (Plugin).app", "havi Helper (Alerts).app"];
 const FFMPEG_PLAT: Record<string, string> = { darwin: "macos", linux: "linux", win32: "win" };
 const CEF_TAG: Record<string, string> = {
@@ -46,10 +42,12 @@ if (platform() !== "darwin") {
   die("macOS host required");
 }
 
-const { targets, profile } = parseArgs();
-const { cef, nodeAv, ffmpeg } = await resolveLatestPins();
+const PINS_FILE = join(ROOT, "build-pins.json");
+
+const { targets, profile, update } = parseCli();
+const { cef, nodeAv, ffmpeg } = await loadPins(update);
 await ensureTools();
-await updateDeps();
+if (update) await updateDeps();
 await prefetchFfmpegs(targets);
 
 const outputs: Array<[string, string]> = [];
@@ -61,23 +59,46 @@ for (const t of targets) {
 console.log(`\nprofile: ${profile}`);
 for (const [tag, path] of outputs) console.log(`  ${tag.padEnd(13)}  ${path}`);
 
-function parseArgs(): { targets: Target[]; profile: "release" | "debug" } {
-  let chosen: Target[] | null = null;
-  let profile: "release" | "debug" = "release";
-  for (const a of process.argv.slice(2)) {
-    if (a === "release" || a === "debug") {
-      profile = a;
-      continue;
-    }
-    if (a === "all") {
-      chosen = [...TARGETS];
-      continue;
-    }
-    const t = TARGETS.find((x) => x.tag === a);
-    if (!t) die(`unknown arg: ${a} (targets: ${TARGETS.map((x) => x.tag).join(" | ")} | all)`);
-    chosen = [t];
+function parseCli(): { targets: Target[]; profile: "release" | "debug"; update: boolean } {
+  const { values } = parseArgs({
+    options: {
+      all: { type: "boolean", default: false },
+      target: { type: "string", multiple: true, default: [] },
+      debug: { type: "boolean", default: false },
+      update: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+  if (values.help) {
+    console.log(
+      "build.ts [--all] [--target <tag>]... [--debug] [--update]\n" +
+        `  targets: ${TARGETS.map((t) => t.tag).join(", ")}\n` +
+        "  --all      build every target          --debug   debug profile (default release)\n" +
+        "  --target   build one target (repeat)   --update  refresh pins + cargo deps to latest",
+    );
+    process.exit(0);
   }
-  return { targets: (chosen ?? [HOST_TARGET]) as Target[], profile };
+  let targets: Target[] = [HOST_TARGET];
+  if (values.all) targets = [...TARGETS];
+  else if (values.target.length) {
+    targets = values.target.map((tag) => {
+      const t = TARGETS.find((x) => x.tag === tag);
+      if (!t) die(`unknown target: ${tag}`);
+      return t;
+    });
+  }
+  return { targets, profile: values.debug ? "debug" : "release", update: values.update };
+}
+
+// --update: resolve latest + persist. Otherwise read the committed pins.
+async function loadPins(update: boolean): Promise<{ cef: string; nodeAv: string; ffmpeg: string }> {
+  if (update) {
+    const pins = await resolveLatestPins();
+    await writeFile(PINS_FILE, JSON.stringify(pins, null, 2) + "\n");
+    return pins;
+  }
+  if (!existsSync(PINS_FILE)) die(`${PINS_FILE} missing — run with --update first`);
+  return JSON.parse(await readFile(PINS_FILE, "utf8"));
 }
 
 // Cargo deps only — JS deps don't affect the built binary.
@@ -221,7 +242,7 @@ function cdylibPath(triple: string, profile: string): string {
 
 async function cargoBuild(triple: string, builder: string, profile: string, extra: string[]) {
   for (let attempt = 1; attempt <= 3; attempt++) {
-    if (builder === "xwin") await patchCefForClangCl(triple);
+    if (builder === "xwin") await patchCefForClangCl();
     const args = ["cargo"];
     if (builder === "zigbuild") args.push("zigbuild", "--target", triple);
     else if (builder === "xwin") args.push("xwin", "build", "--target", triple);
@@ -248,11 +269,12 @@ function cefCache(): string {
 
 // Two CEF cmake bugs against clang-cl: /MP (clang-cl errors under /WX) and
 // set(CMAKE_CXX_FLAGS "") clears xwin toolchain flags.
-async function patchCefForClangCl(triple: string) {
-  const dir = await cefDirOrNull(triple);
-  if (!dir) return;
-  const file = join(dir, "cmake/cef_variables.cmake");
-  if (existsSync(file)) {
+// Patch every windows CEF dist (cef-dll-sys may download a new version dir mid
+// build; patch all so the one it actually uses is covered).
+async function patchCefForClangCl() {
+  for (const dir of await findDirs(cefCache(), "cef_windows_x86_64", 6)) {
+    const file = join(dir, "cmake/cef_variables.cmake");
+    if (!existsSync(file)) continue;
     const orig = await readFile(file, "utf8");
     let patched = orig.split("/MP\n").join("\n").split("/MP ").join(" ").split(" /MP").join("");
     for (const line of [
@@ -386,7 +408,7 @@ async function ensureTools() {
 // Reinstall bundle-cef-app only when the cef version changed (recompiles ~30s).
 async function ensureBundleCefApp() {
   const list = await $`cargo install --list`.text().catch(() => "");
-  if (list.includes(`cef v${cef}:`)) return;
+  if (list.includes(`cef v${cef}`)) return; // installed shows cef v<ver>+<build>:
   await tryRun([
     "cargo", "install", "cef", "--version", cef,
     "--features", "build-util", "--bin", "bundle-cef-app", "--force",
@@ -457,7 +479,12 @@ async function run(args: string[], env: Record<string, string> = {}) {
 }
 
 async function findDir(root: string, name: string, maxDepth: number): Promise<string | null> {
-  if (!existsSync(root)) return null;
+  return (await findDirs(root, name, maxDepth))[0] ?? null;
+}
+
+async function findDirs(root: string, name: string, maxDepth: number): Promise<string[]> {
+  const out: string[] = [];
+  if (!existsSync(root)) return out;
   const stack: Array<[string, number]> = [[root, 0]];
   while (stack.length) {
     const [dir, depth] = stack.pop()!;
@@ -471,11 +498,11 @@ async function findDir(root: string, name: string, maxDepth: number): Promise<st
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       const path = join(dir, e.name);
-      if (e.name === name) return path;
-      stack.push([path, depth + 1]);
+      if (e.name === name) out.push(path);
+      else stack.push([path, depth + 1]);
     }
   }
-  return null;
+  return out;
 }
 
 function die(msg: string): never {
