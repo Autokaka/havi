@@ -19,10 +19,10 @@ import { fileURLToPath } from "node:url";
 const APP = "havi";
 const LIB = "havi_core";
 const IDENT = "havi-codesign";
-// Pins — resolved to latest at startup (resolveLatestPins), these are fallbacks.
-let CEF_CRATE_VERSION = "148.2.0";
-let NODE_AV_TAG = "v5.2.4";
-let FFMPEG_VER = "v8.1";
+// Pins — resolved to latest at startup by resolveLatestPins().
+let CEF_CRATE_VERSION = "";
+let NODE_AV_TAG = "";
+let FFMPEG_VER = "";
 
 type Target = { tag: string; triple: string; plat: string; arch: string };
 
@@ -96,7 +96,7 @@ async function tryRun(args: string[]) {
   }
 }
 
-// Resolve cef / node-av / ffmpeg pins to latest (best-effort; keep fallbacks on failure).
+// Resolve cef / node-av / ffmpeg pins to latest. Required — die if unresolved.
 async function resolveLatestPins() {
   const cef = await tryFetchJson("https://crates.io/api/v1/crates/cef");
   const cv = cef?.crate?.max_stable_version ?? cef?.crate?.newest_version;
@@ -104,12 +104,16 @@ async function resolveLatestPins() {
 
   const rel = await tryFetchJson("https://api.github.com/repos/seydx/node-av/releases/latest");
   if (typeof rel?.tag_name === "string") NODE_AV_TAG = rel.tag_name;
-  const asset = (rel?.assets ?? [])
-    .map((a: { name?: string }) => a?.name ?? "")
-    .find((n: string) => /ffmpeg-v[\d.]+-.*jellyfin\.zip/.test(n));
-  const m = typeof asset === "string" ? asset.match(/ffmpeg-(v[\d.]+)-/) : null;
-  if (m) FFMPEG_VER = m[1]!;
+  // ffmpeg version = exact token node-av ships in its jellyfin asset name.
+  const names: string[] = (rel?.assets ?? []).map((a: { name?: string }) => a?.name ?? "");
+  for (const n of names) {
+    const m = n.match(/^ffmpeg-(.+)-(?:macos|linux|win)-(?:arm64|x64)-jellyfin\.zip$/);
+    if (m) { FFMPEG_VER = m[1]!; break; }
+  }
 
+  if (!CEF_CRATE_VERSION) die("could not resolve cef version (crates.io unreachable?)");
+  if (!NODE_AV_TAG) die("could not resolve node-av release (github unreachable?)");
+  if (!FFMPEG_VER) die("could not resolve ffmpeg version from node-av assets");
   console.error(`pins → cef ${CEF_CRATE_VERSION}, node-av ${NODE_AV_TAG}, ffmpeg ${FFMPEG_VER}`);
 }
 
