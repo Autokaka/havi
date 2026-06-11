@@ -77,13 +77,13 @@ function parseArgs(): { targets: Target[]; profile: "release" | "debug" } {
   return { targets: (chosen ?? [HOST_TARGET]) as Target[], profile };
 }
 
+// Cargo deps only — JS deps don't affect the built binary.
 async function updateDeps() {
-  console.error("updating deps to latest");
+  console.error("updating cargo deps to latest");
   if (!(await which("cargo-upgrade"))) await tryRun(["cargo", "install", "cargo-edit"]);
   await tryRun(["cargo", "upgrade", "--incompatible", "--exclude", "cef"]);
   await tryRun(["cargo", "update"]);
   await tryRun(["cargo", "update", "-p", "cef", "--precise", CEF_CRATE_VERSION]); // re-pin cef
-  await tryRun(["bun", "update"]);
 }
 
 async function tryRun(args: string[]) {
