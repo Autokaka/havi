@@ -44,7 +44,6 @@ pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> (Child, Join
         args.push(out.clone());
     }
 
-    ipc::console(ipc::Level::Info, "ffmpeg", &format!("exec: {} {}", ffmpeg.display(), args.join(" ")));
     let mut cmd = Command::new(&ffmpeg);
     cmd.args(&args)
         .stdin(Stdio::piped())
