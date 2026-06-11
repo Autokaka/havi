@@ -18,7 +18,9 @@ wrap_render_process_handler! {
             frame: Option<&mut Frame>,
             _context: Option<&mut V8Context>,
         ) {
-            if let Some(frame) = frame {
+            // Hook only the user sub-frame, never havi's host page — else the host
+            // also fires dom-ready, double-advancing the phase before warmup reload.
+            if let Some(frame) = frame.filter(|f| f.is_main() == 0) {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis())

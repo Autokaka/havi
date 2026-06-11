@@ -55,6 +55,7 @@ fn main() {
         stuck_invalidates: 0,
         tx: Some(tx),
         done: false,
+        reload_fired: false,
         browser: browser_handle.clone(),
         iframe: Arc::new(Mutex::new(None)),
         cdp: cdp.clone(),

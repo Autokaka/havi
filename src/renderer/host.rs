@@ -63,7 +63,7 @@ fn build_host_html(target_url: &str, width: u32, height: u32) -> String {
   </style>
 </head>
 <body>
-  <iframe id="target" src="{url}"></iframe>
+  <iframe id="target" name="havi_target" src="{url}"></iframe>
   <canvas id="stego" width="{w}" height="1"></canvas>
   <div id="heartbeat"></div>
   <script>{shim}</script>

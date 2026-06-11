@@ -12,12 +12,16 @@ const WARMUP_MS: i64 = 2000;
 pub const LOAD_TIMEOUT_MS: i64 = 15000;
 
 wrap_task! {
-    pub struct ReloadTask { pub browser: super::capture::BrowserHandle }
+    pub struct ReloadTask { pub state: Shared }
     impl Task {
         fn execute(&self) {
-            if let Some(main) = self.browser.lock().expect("browser poisoned")
-                .as_ref().and_then(|b| b.main_frame())
-            {
+            let browser = {
+                let mut s = self.state.lock().expect("state poisoned");
+                s.reload_fired = true;
+                s.browser.clone()
+            };
+            let main = browser.lock().expect("browser poisoned").as_ref().and_then(|b| b.main_frame());
+            if let Some(main) = main {
                 let url = CefString::from(&main.url()).to_string();
                 main.load_url(Some(&CefString::from(url.as_str())));
             }
@@ -65,8 +69,7 @@ wrap_task! {
     }
 }
 
-/// Advance phase: 0→1 schedules warmup reload, 1→2 primes render.
-/// Called by load_end (non-tolerant) or DOMContentLoaded hook (tolerant).
+// 0→1 schedules warmup reload; 1→2 (after reload fired) primes capture.
 pub fn advance_phase(state: &Shared, phase: &Arc<Mutex<u8>>, iframe: Option<Frame>) {
     let mut p = phase.lock().expect("phase poisoned");
     match *p {
@@ -74,15 +77,18 @@ pub fn advance_phase(state: &Shared, phase: &Arc<Mutex<u8>>, iframe: Option<Fram
             *p = 1;
             drop(p);
             ipc::set_console_capture(true);
-            let mut task = ReloadTask::new(state.lock().expect("state poisoned").browser.clone());
+            let mut task = ReloadTask::new(state.clone());
             post_delayed_task(ThreadId::UI, Some(&mut task), WARMUP_MS);
         }
         1 => {
+            // Capture only after the warmup reload fired — else it lands mid-capture and deadlocks virtual time.
+            if !state.lock().expect("state poisoned").reload_fired { return; }
             *p = 2;
             drop(p);
+            // Tolerant drives phase via dom-ready (no frame arg) — resolve the sub-frame by name, not main_frame() (host page).
             let f = iframe.or_else(|| {
                 state.lock().expect("state poisoned").browser.lock().expect("browser poisoned")
-                    .as_ref().and_then(|b| b.main_frame())
+                    .as_ref().and_then(|b| b.frame_by_name(Some(&CefString::from("havi_target"))))
             });
             if let Some(ff) = f {
                 *state.lock().expect("state poisoned").iframe.lock().expect("iframe poisoned") = Some(ff);

@@ -15,6 +15,7 @@ pub struct State {
     pub stuck_invalidates: u32,
     pub tx: Option<SyncSender<Vec<u8>>>,
     pub done: bool,
+    pub reload_fired: bool,
     pub browser: BrowserHandle,
     pub iframe: FrameHandle,
     pub cdp: Cdp,
