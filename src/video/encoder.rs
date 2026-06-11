@@ -39,6 +39,9 @@ pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> (Child, ErrT
         "-pixel_format", "bgra", "-video_size", &size, "-framerate", &fps_str, "-i", "-"]
         .iter().map(|s| s.to_string()).collect();
     for out in outs {
+        if let Some(parent) = Path::new(out).parent().filter(|p| !p.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(parent);
+        }
         args.extend(codec_args(out, &x265_params));
         args.push(out.clone());
     }
