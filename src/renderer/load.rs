@@ -74,18 +74,18 @@ pub fn advance_phase(state: &Shared, phase: &Arc<Mutex<u8>>, iframe: Option<Fram
             *p = 1;
             drop(p);
             ipc::set_console_capture(true);
-            let mut task = ReloadTask::new(state.lock().expect("state").browser.clone());
+            let mut task = ReloadTask::new(state.lock().expect("state poisoned").browser.clone());
             post_delayed_task(ThreadId::UI, Some(&mut task), WARMUP_MS);
         }
         1 => {
             *p = 2;
             drop(p);
             let f = iframe.or_else(|| {
-                state.lock().expect("state").browser.lock().expect("browser")
+                state.lock().expect("state poisoned").browser.lock().expect("browser poisoned")
                     .as_ref().and_then(|b| b.main_frame())
             });
             if let Some(ff) = f {
-                *state.lock().expect("state").iframe.lock().expect("iframe") = Some(ff);
+                *state.lock().expect("state poisoned").iframe.lock().expect("iframe poisoned") = Some(ff);
             }
             let mut task = PrimeTask::new(state.clone());
             post_task(ThreadId::UI, Some(&mut task));

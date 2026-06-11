@@ -32,6 +32,39 @@ Pre-write checklist before adding ANY comment:
 
 After every refactor: re-read every touched file and trim. Burned 7 times.
 
+## Rust idiom (STRICT — write it like a Rustacean or don't write it)
+
+Ridiculous code gets reverted on sight. Before you write ANY Rust here, the
+default is the simplest ownership that works. Reach for a sync primitive or an
+allocation only when you can name why nothing cheaper suffices.
+
+HARD RULES — no exceptions:
+- **No `Arc<Mutex<T>>` reflex.** If state is written by one owner and read after
+  it finishes → return it (thread `JoinHandle<T>`, channel, or plain move). If
+  it's truly shared across threads/callbacks → fine. A `Mutex` whose value is
+  read only once the writer is done is a code smell. Prove the sharing is real.
+- **No allocation theatre.** Don't build `Vec<String>` of flags when `&[&str]`
+  + `cmd.args()` works. Don't `.to_string()`/`.clone()` to dodge a borrow. Don't
+  `format!` where a `&str` literal does. Clone `Arc` freely (cheap); clone owned
+  data only when ownership genuinely must split.
+- **No panic on the outside world.** `.unwrap()`/`.expect()` ONLY on: lock
+  poisoning, `OnceLock`/invariants you just established, or startup asserts.
+  NEVER on I/O, subprocess exit, network, parses of external/CLI/FFI data, or a
+  channel that a peer thread can drop. Those return `Result`/`Option` and are
+  handled — a dead subprocess must surface an error, not abort the process.
+- **`TryFrom`, not `as`** for anything lossy/narrowing on external data (CLI,
+  FFI, ffmpeg, file sizes). `as` is allowed ONLY for lossless widening
+  (u32→i64, u8→u32) and pointer/FFI casts. `value as u8` on untrusted width is
+  banned (principle 12).
+- **Std over hand-roll.** No reverse-then-reverse, no char-by-char loop where an
+  iterator adapter / `split_once` / `trim_matches` / `find`+slice reads clearer.
+- **Enums over stringly-typed** internal state. Pass `Format`, not `"webm"`,
+  across Rust boundaries (CLI flag strings at the edge are fine).
+
+Pre-write gut check: "Is there a simpler ownership/type that a senior Rust dev
+would reach for first?" If yes, write that. After every edit, re-read for
+`Arc<Mutex`, stray `.clone()`/`.to_string()`, and `.expect()` on I/O — trim them.
+
 ## File naming
 
 - Rust source: snake_case (`my_module.rs`)

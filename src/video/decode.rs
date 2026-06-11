@@ -41,9 +41,8 @@ pub fn probe(ff: &Path, src: &str) -> Option<(u32, u32, f64)> {
         if line.contains("Video:") && w == 0 {
             for tok in line.split(',') {
                 if let Some((wp, hp)) = tok.trim().split_once('x') {
-                    let ws: String = wp.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
-                    let ws: String = ws.chars().rev().collect();
-                    let hs: String = hp.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    let ws = trailing_digits(wp);
+                    let hs = leading_digits(hp);
                     if let (Ok(pw), Ok(ph)) = (ws.parse::<u32>(), hs.parse::<u32>()) {
                         if pw > 0 && ph > 0 { w = pw; h = ph; break; }
                     }
@@ -53,6 +52,14 @@ pub fn probe(ff: &Path, src: &str) -> Option<(u32, u32, f64)> {
     }
     if w == 0 || h == 0 { return None; }
     Some((w, h, dur))
+}
+
+fn leading_digits(s: &str) -> &str {
+    &s[..s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len())]
+}
+
+fn trailing_digits(s: &str) -> &str {
+    &s[s.rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1)..]
 }
 
 pub fn count_pngs(dir: &Path) -> u32 {
