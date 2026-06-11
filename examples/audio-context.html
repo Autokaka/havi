@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>havi — AudioContext visualizer</title>
+    <style>
+      * { margin: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden;
+        background: #0a1628; display: grid; place-items: center;
+        font-family: system-ui, sans-serif; color: #e2e8f0; }
+      .bars { display: flex; align-items: flex-end; gap: 6px; height: 40vmin; }
+      .bar { width: 2vmin; border-radius: 3px 3px 0 0;
+        background: linear-gradient(to top, #0ea5e9, #38bdf8); }
+    </style>
+  </head>
+  <body>
+    <div class="bars" id="bars"></div>
+    <script>
+      // In-memory WAV (sine melody, loop) → <audio> → AudioContext analyser.
+      function wav(sr, dur) {
+        const n = (sr * dur) | 0, ds = n * 4, b = new ArrayBuffer(44 + ds), v = new DataView(b);
+        const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+        s(0, "RIFF"); v.setUint32(4, 36 + ds, true); s(8, "WAVE"); s(12, "fmt ");
+        v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+        v.setUint32(24, sr, true); v.setUint32(28, sr * 4, true); v.setUint16(32, 4, true);
+        v.setUint16(34, 16, true); s(36, "data"); v.setUint32(40, ds, true);
+        let o = 44; const mel = [261.63, 329.63, 392, 523.25], seg = (sr * dur / mel.length) | 0;
+        for (const f of mel) for (let i = 0; i < seg; i++) {
+          const t = i / sr, e = Math.min(1, t * 8);
+          const x = Math.max(-32768, Math.min(32767, Math.round(Math.sin(2 * Math.PI * f * t) * e * 0.6 * 32767)));
+          v.setInt16(o, x, true); o += 2; v.setInt16(o, x, true); o += 2;
+        }
+        return b;
+      }
+      const audio = new Audio();
+      audio.loop = true;
+      audio.src = URL.createObjectURL(new Blob([wav(44100, 4)], { type: "audio/wav" }));
+      audio.play().catch(() => {});
+
+      const N = 28, wrap = document.getElementById("bars"), els = [];
+      for (let i = 0; i < N; i++) { const b = document.createElement("div"); b.className = "bar"; b.style.height = "4px"; wrap.appendChild(b); els.push(b); }
+      const ctx = new AudioContext(), an = ctx.createAnalyser();
+      an.fftSize = 64;
+      ctx.createMediaElementSource(audio).connect(an);
+      an.connect(ctx.destination);
+      const data = new Uint8Array(an.frequencyBinCount);
+      function draw() {
+        requestAnimationFrame(draw);
+        an.getByteFrequencyData(data);
+        for (let i = 0; i < N; i++) els[i].style.height = Math.max(0.03, data[(i * data.length / N) | 0] / 255) * 36 + 4 + "vmin";
+      }
+      draw();
+    </script>
+  </body>
+</html>

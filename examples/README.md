@@ -15,7 +15,10 @@ havi examples/canvas-particles.html -t 4 -o particles.mp4
 | `svg-spinner.html` | Animated SVG — rotating rings, `stroke-dasharray`, SMIL `<animate>` |
 | `transparent-ring.html` | Transparent background — captured as HEVC with alpha for compositing |
 | `typing.html` | Timed text reveal driven by the virtual clock |
+| `audio-context.html` | `<audio>` + `AudioContext` analyser visualizer (in-memory WAV) |
 | `stamp.html` | Determinism fixture — encodes the virtual timestamp each frame |
+
+`scripts/smoke_tolerant.sh` renders every example in `--tolerant` mode and fails on any stall — a regression guard for the warmup-reload sequencing.
 
 `transparent-ring.html` produces alpha video. Composite it over any backdrop; the page background stays transparent end to end.
 
