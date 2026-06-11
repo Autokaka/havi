@@ -1,6 +1,6 @@
 {
   "name": "@autokaka/havi",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Deterministic HTML-to-video renderer.",
   "type": "module",
   "bin": {
