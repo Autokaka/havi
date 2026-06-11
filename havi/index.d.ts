@@ -67,3 +67,6 @@ export interface Havi {
 }
 
 export const havi: Havi
+
+/** Absolute path to the ffmpeg binary bundled with havi for this platform. */
+export function ffmpeg(): string
