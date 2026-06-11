@@ -33,6 +33,12 @@ const TARGETS: Target[] = [
 const HOST_TARGET = TARGETS[0];
 const PRUNED_HELPERS = ["havi Helper (Plugin).app", "havi Helper (Alerts).app"];
 const FFMPEG_PLAT: Record<string, string> = { darwin: "macos", linux: "linux", win32: "win" };
+const CEF_TAG: Record<string, string> = {
+  "aarch64-apple-darwin": "cef_macos_aarch64",
+  "aarch64-unknown-linux-gnu": "cef_linux_aarch64",
+  "x86_64-unknown-linux-gnu": "cef_linux_x86_64",
+  "x86_64-pc-windows-msvc": "cef_windows_x86_64",
+};
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 process.chdir(ROOT);
@@ -41,7 +47,7 @@ if (platform() !== "darwin") {
 }
 
 const { targets, profile } = parseArgs();
-const { cef: CEF_CRATE_VERSION, nodeAv: NODE_AV_TAG, ffmpeg: FFMPEG_VER } = await resolveLatestPins();
+const { cef, nodeAv, ffmpeg } = await resolveLatestPins();
 await ensureTools();
 await updateDeps();
 await prefetchFfmpegs(targets);
@@ -77,11 +83,11 @@ function parseArgs(): { targets: Target[]; profile: "release" | "debug" } {
 // Cargo deps only — JS deps don't affect the built binary.
 async function updateDeps() {
   console.error("updating cargo deps to latest");
-  await pinCargoCef(CEF_CRATE_VERSION); // match bundle-cef-app
+  await pinCargoCef(cef); // match bundle-cef-app
   if (!(await which("cargo-upgrade"))) await tryRun(["cargo", "install", "cargo-edit"]);
   await tryRun(["cargo", "upgrade", "--incompatible", "--exclude", "cef"]);
   await tryRun(["cargo", "update"]);
-  await tryRun(["cargo", "update", "-p", "cef", "--precise", CEF_CRATE_VERSION]);
+  await tryRun(["cargo", "update", "-p", "cef", "--precise", cef]);
 }
 
 async function tryRun(args: string[]) {
@@ -131,14 +137,22 @@ async function pinCargoCef(version: string) {
   if (patched !== src) await writeFile(f, patched);
 }
 
-async function buildMacos(t: Target, profile: string): Promise<string> {
-  await cargoBuild(t.triple, "cargo", profile, []);
-  await cargoBuild(t.triple, "cargo", profile, ["--lib", "--features", "napi-binding"]);
-  const cefFw = await cefFramework(t.triple);
+async function buildCargo(triple: string, builder: string, profile: string) {
+  await cargoBuild(triple, builder, profile, []);
+  await cargoBuild(triple, builder, profile, ["--lib", "--features", "napi-binding"]);
+}
 
-  const distDir = join("dist", t.tag);
-  await rm(distDir, { recursive: true, force: true });
-  await mkdir(distDir, { recursive: true });
+async function freshDist(t: Target): Promise<string> {
+  const dir = join("dist", t.tag);
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+async function buildMacos(t: Target, profile: string): Promise<string> {
+  await buildCargo(t.triple, "cargo", profile);
+  const cefFw = await cefFramework(t.triple);
+  const distDir = await freshDist(t);
   await run(["bundle-cef-app", "-o", distDir, APP], {
     CEF_PATH: dirname(cefFw),
     CARGO_BUILD_TARGET: t.triple,
@@ -181,12 +195,8 @@ async function buildMacos(t: Target, profile: string): Promise<string> {
 
 async function buildUnbundled(t: Target, profile: string): Promise<string> {
   const builder = t.plat === "win32" ? "xwin" : "zigbuild";
-  await cargoBuild(t.triple, builder, profile, []);
-  await cargoBuild(t.triple, builder, profile, ["--lib", "--features", "napi-binding"]);
-
-  const distDir = join("dist", t.tag);
-  await rm(distDir, { recursive: true, force: true });
-  await mkdir(distDir, { recursive: true });
+  await buildCargo(t.triple, builder, profile);
+  const distDir = await freshDist(t);
 
   const exe = t.plat === "win32" ? `${APP}.exe` : APP;
   await cp(`target/${t.triple}/${profile}/${exe}`, join(distDir, exe));
@@ -255,21 +265,6 @@ async function patchCefForClangCl(triple: string) {
     }
     if (patched !== orig) await writeFile(file, patched);
   }
-  await patchCefDllSysDropDelayimp();
-}
-
-// Windows 11 SDK arm64 delayimp.lib is ARM64EC; llvm-lib chokes. Drop from
-// CMAKE_STATIC_LINKER_FLAGS — Rust handles dynamic linking anyway.
-async function patchCefDllSysDropDelayimp() {
-  const registry = join(homedir(), ".cargo/registry/src");
-  const tag = "cef-dll-sys-148.1.0+147.0.14";
-  const found = await findDir(registry, tag, 3);
-  if (!found) return;
-  const buildRs = join(found, "build.rs");
-  if (!existsSync(buildRs)) return;
-  const orig = await readFile(buildRs, "utf8");
-  const patched = orig.split('"delayimp.lib",\n').join("");
-  if (patched !== orig) await writeFile(buildRs, patched);
 }
 
 async function cefDir(triple: string): Promise<string> {
@@ -292,18 +287,7 @@ async function cefFramework(triple: string): Promise<string> {
 }
 
 function osArchTag(triple: string): string {
-  switch (triple) {
-    case "aarch64-apple-darwin":
-      return "cef_macos_aarch64";
-    case "aarch64-unknown-linux-gnu":
-      return "cef_linux_aarch64";
-    case "x86_64-unknown-linux-gnu":
-      return "cef_linux_x86_64";
-    case "x86_64-pc-windows-msvc":
-      return "cef_windows_x86_64";
-    default:
-      throw new Error(`unsupported triple: ${triple}`);
-  }
+  return CEF_TAG[triple] ?? die(`unsupported triple: ${triple}`);
 }
 
 async function copyCefRuntime(src: string, dst: string, profile: string) {
@@ -342,32 +326,26 @@ function llvmStripBin(): string {
   return "llvm-strip";
 }
 
+async function ffmpegZip(plat: string, arch: string): Promise<string> {
+  const zip = `ffmpeg-${ffmpeg}-${plat}-${arch}-jellyfin.zip`;
+  const cache = join(cacheDir(), zip);
+  if (!existsSync(cache)) {
+    await download(`https://github.com/seydx/node-av/releases/download/${nodeAv}/${zip}`, cache);
+  }
+  return cache;
+}
+
 async function prefetchFfmpegs(targets: Target[]) {
-  const pairs = targets.map((t) => ({ plat: FFMPEG_PLAT[t.plat]!, arch: t.arch }));
-  await Promise.all(
-    pairs.map(async ({ plat, arch }) => {
-      const zip = `ffmpeg-${FFMPEG_VER}-${plat}-${arch}-jellyfin.zip`;
-      const cache = join(cacheDir(), zip);
-      if (existsSync(cache)) return;
-      const url = `https://github.com/seydx/node-av/releases/download/${NODE_AV_TAG}/${zip}`;
-      await download(url, cache);
-    }),
-  );
+  await Promise.all(targets.map((t) => ffmpegZip(FFMPEG_PLAT[t.plat]!, t.arch)));
 }
 
 async function extractFfmpeg(plat: string, arch: string, dest: string) {
-  const zip = `ffmpeg-${FFMPEG_VER}-${plat}-${arch}-jellyfin.zip`;
-  const cache = join(cacheDir(), zip);
-  if (!existsSync(cache)) {
-    const url = `https://github.com/seydx/node-av/releases/download/${NODE_AV_TAG}/${zip}`;
-    await download(url, cache);
-  }
+  const cache = await ffmpegZip(plat, arch);
   await mkdir(dirname(dest), { recursive: true });
-  const buf = await readFile(cache);
-  const files = unzipSync(new Uint8Array(buf));
+  const files = unzipSync(new Uint8Array(await readFile(cache)));
   const first = Object.entries(files).find(([n]) => !n.endsWith("/"));
   if (!first) die(`zip ${cache} empty`);
-  await writeFile(dest, first![1]);
+  await writeFile(dest, first[1]);
 }
 
 async function codesignBundle(app: string) {
@@ -408,9 +386,9 @@ async function ensureTools() {
 // Reinstall bundle-cef-app only when the cef version changed (recompiles ~30s).
 async function ensureBundleCefApp() {
   const list = await $`cargo install --list`.text().catch(() => "");
-  if (list.includes(`cef v${CEF_CRATE_VERSION}:`)) return;
+  if (list.includes(`cef v${cef}:`)) return;
   await tryRun([
-    "cargo", "install", "cef", "--version", CEF_CRATE_VERSION,
+    "cargo", "install", "cef", "--version", cef,
     "--features", "build-util", "--bin", "bundle-cef-app", "--force",
   ]);
 }
@@ -437,61 +415,14 @@ async function createSelfSignedCert() {
       `extendedKeyUsage = critical,codeSigning\n# Apple Code Signing OID — required since macOS 13.\n` +
       `1.2.840.113635.100.6.1.13 = critical,DER:0500\n`,
   );
-  await run([
-    "openssl",
-    "req",
-    "-new",
-    "-newkey",
-    "rsa:2048",
-    "-x509",
-    "-days",
-    "3650",
-    "-nodes",
-    "-keyout",
-    key,
-    "-out",
-    crt,
-    "-config",
-    conf,
-  ]);
+  await run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-x509", "-days", "3650",
+    "-nodes", "-keyout", key, "-out", crt, "-config", conf]);
   // macOS Security can't read OpenSSL 3 PBES2 PKCS12 — pin legacy 3DES.
-  await run([
-    "openssl",
-    "pkcs12",
-    "-export",
-    "-legacy",
-    "-keypbe",
-    "PBE-SHA1-3DES",
-    "-certpbe",
-    "PBE-SHA1-3DES",
-    "-macalg",
-    "sha1",
-    "-iter",
-    "2048",
-    "-out",
-    p12,
-    "-inkey",
-    key,
-    "-in",
-    crt,
-    "-name",
-    IDENT,
-    "-passout",
-    "pass:havi",
-  ]);
-  await run([
-    "security",
-    "import",
-    p12,
-    "-k",
-    keychain,
-    "-P",
-    "havi",
-    "-T",
-    "/usr/bin/codesign",
-    "-T",
-    "/usr/bin/security",
-  ]);
+  await run(["openssl", "pkcs12", "-export", "-legacy", "-keypbe", "PBE-SHA1-3DES",
+    "-certpbe", "PBE-SHA1-3DES", "-macalg", "sha1", "-iter", "2048", "-out", p12,
+    "-inkey", key, "-in", crt, "-name", IDENT, "-passout", "pass:havi"]);
+  await run(["security", "import", p12, "-k", keychain, "-P", "havi",
+    "-T", "/usr/bin/codesign", "-T", "/usr/bin/security"]);
   await run(["security", "add-trusted-cert", "-p", "codeSign", "-k", keychain, crt]);
   if (!(await hasCodesignIdentity())) die(`identity '${IDENT}' missing after import`);
 }
