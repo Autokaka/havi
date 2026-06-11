@@ -26,8 +26,7 @@ pub struct State {
 
 pub type Shared = Arc<Mutex<State>>;
 
-// Wall-clock guard per frame. If a frame produces no matching paint in this
-// window (e.g. virtualTimeBudgetExpired never fires), abort instead of hanging.
+// Per-frame wall-clock guard — abort if no paint, don't hang.
 const FRAME_TIMEOUT_MS: i64 = 5000;
 
 pub fn pause_virtual_time(cdp: &Cdp, host: &BrowserHost) {
