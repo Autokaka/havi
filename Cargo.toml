@@ -20,7 +20,7 @@ path = "src/cef/helper.rs"
 
 [dependencies]
 # 148.2.0+148.0.8 → CEF 148 → Chromium 148.
-cef = "148.2.0"
+cef = "148.4.0"
 clap = { version = "4", features = ["derive"] }
 signal-hook = "0.4"
 serde = { version = "1", features = ["derive"] }

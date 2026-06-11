@@ -5,8 +5,7 @@
 //   ./build.ts <target>              one target (darwin-arm64 | linux-arm64 | linux-x64 | win32-x64)
 //   ./build.ts <target|all> debug    debug profile
 //   ./build.ts debug                 current host, debug
-// Always refreshes deps to latest before building (best-effort).
-// CEF + ffmpeg are pinned binaries — bump their constants by hand.
+// Resolves cef + ffmpeg + cargo deps to latest before building (best-effort).
 // Outputs: dist/<platform>-<arch>/
 
 import { $ } from "bun";
@@ -20,9 +19,10 @@ import { fileURLToPath } from "node:url";
 const APP = "havi";
 const LIB = "havi_core";
 const IDENT = "havi-codesign";
-const CEF_CRATE_VERSION = "148.2.0";
-const NODE_AV_TAG = "v5.2.4";
-const FFMPEG_VER = "v8.1";
+// Pins — resolved to latest at startup (resolveLatestPins), these are fallbacks.
+let CEF_CRATE_VERSION = "148.2.0";
+let NODE_AV_TAG = "v5.2.4";
+let FFMPEG_VER = "v8.1";
 
 type Target = { tag: string; triple: string; plat: string; arch: string };
 
@@ -45,6 +45,7 @@ if (platform() !== "darwin") {
 }
 
 const { targets, profile } = parseArgs();
+await resolveLatestPins();
 await ensureTools();
 await updateDeps();
 await prefetchFfmpegs(targets);
@@ -80,10 +81,11 @@ function parseArgs(): { targets: Target[]; profile: "release" | "debug" } {
 // Cargo deps only — JS deps don't affect the built binary.
 async function updateDeps() {
   console.error("updating cargo deps to latest");
+  await pinCargoCef(CEF_CRATE_VERSION); // match bundle-cef-app
   if (!(await which("cargo-upgrade"))) await tryRun(["cargo", "install", "cargo-edit"]);
   await tryRun(["cargo", "upgrade", "--incompatible", "--exclude", "cef"]);
   await tryRun(["cargo", "update"]);
-  await tryRun(["cargo", "update", "-p", "cef", "--precise", CEF_CRATE_VERSION]); // re-pin cef
+  await tryRun(["cargo", "update", "-p", "cef", "--precise", CEF_CRATE_VERSION]);
 }
 
 async function tryRun(args: string[]) {
@@ -92,6 +94,40 @@ async function tryRun(args: string[]) {
   } catch (e) {
     console.error(`skip (non-fatal): ${args.join(" ")} → ${e}`);
   }
+}
+
+// Resolve cef / node-av / ffmpeg pins to latest (best-effort; keep fallbacks on failure).
+async function resolveLatestPins() {
+  const cef = await tryFetchJson("https://crates.io/api/v1/crates/cef");
+  const cv = cef?.crate?.max_stable_version ?? cef?.crate?.newest_version;
+  if (typeof cv === "string") CEF_CRATE_VERSION = cv.split("+")[0]!; // drop +build metadata
+
+  const rel = await tryFetchJson("https://api.github.com/repos/seydx/node-av/releases/latest");
+  if (typeof rel?.tag_name === "string") NODE_AV_TAG = rel.tag_name;
+  const asset = (rel?.assets ?? [])
+    .map((a: { name?: string }) => a?.name ?? "")
+    .find((n: string) => /ffmpeg-v[\d.]+-.*jellyfin\.zip/.test(n));
+  const m = typeof asset === "string" ? asset.match(/ffmpeg-(v[\d.]+)-/) : null;
+  if (m) FFMPEG_VER = m[1]!;
+
+  console.error(`pins → cef ${CEF_CRATE_VERSION}, node-av ${NODE_AV_TAG}, ffmpeg ${FFMPEG_VER}`);
+}
+
+async function tryFetchJson(url: string): Promise<any | null> {
+  try {
+    const res = await fetch(url, { headers: { "user-agent": "havi-build" }, redirect: "follow" });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function pinCargoCef(version: string) {
+  const f = join(ROOT, "Cargo.toml");
+  const src = await readFile(f, "utf8");
+  const patched = src.replace(/^cef = "[^"]*"/m, `cef = "${version}"`);
+  if (patched !== src) await writeFile(f, patched);
 }
 
 async function buildMacos(t: Target, profile: string): Promise<string> {
@@ -364,20 +400,18 @@ async function ensureTools() {
   for (const t of ["cargo-zigbuild", "cargo-xwin"]) {
     if (!(await which(t))) await run(["cargo", "install", t]);
   }
-  if (!(await which("bundle-cef-app"))) {
-    await run([
-      "cargo",
-      "install",
-      "cef",
-      "--version",
-      CEF_CRATE_VERSION,
-      "--features",
-      "build-util",
-      "--bin",
-      "bundle-cef-app",
-    ]);
-  }
+  await ensureBundleCefApp();
   if (!(await hasCodesignIdentity())) await createSelfSignedCert();
+}
+
+// Reinstall bundle-cef-app only when the cef version changed (recompiles ~30s).
+async function ensureBundleCefApp() {
+  const list = await $`cargo install --list`.text().catch(() => "");
+  if (list.includes(`cef v${CEF_CRATE_VERSION}:`)) return;
+  await tryRun([
+    "cargo", "install", "cef", "--version", CEF_CRATE_VERSION,
+    "--features", "build-util", "--bin", "bundle-cef-app", "--force",
+  ]);
 }
 
 async function hasCodesignIdentity(): Promise<boolean> {
