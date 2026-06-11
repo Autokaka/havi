@@ -84,8 +84,16 @@ wrap_render_handler! {
             let total = cap.total_frames;
             let last = n + 1 >= total;
             let frame_bytes = buf[..payload].to_vec();
+            // Encoder gone (ffmpeg died) — quit cleanly so main reports its exit
+            // status as an error, instead of panicking (silent abort, no event).
             if let Some(tx) = cap.tx.as_ref() {
-                tx.send(frame_bytes).expect("encoder channel closed");
+                if tx.send(frame_bytes).is_err() {
+                    cap.done = true;
+                    cap.tx = None;
+                    drop(cap);
+                    quit_message_loop();
+                    return;
+                }
             }
             draw_progress(n + 1, total);
 
