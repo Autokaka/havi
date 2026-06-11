@@ -3,6 +3,7 @@
 /bin
 /*.app
 /out.mp4
+/out.webm
 /run.log
 /run.pid
 /node_modules
