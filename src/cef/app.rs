@@ -57,7 +57,12 @@ wrap_app! {
         ) {
             if let Some(cmd) = command_line {
                 for flag in deterministic_flags() {
-                    cmd.append_switch(Some(&CefString::from(flag.as_str())));
+                    // key=value needs a value switch, else stored under key "k=v" and GetSwitchValue("k") misses it.
+                    match flag.split_once('=') {
+                        Some((k, v)) => cmd.append_switch_with_value(
+                            Some(&CefString::from(k)), Some(&CefString::from(v))),
+                        None => cmd.append_switch(Some(&CefString::from(flag.as_str()))),
+                    }
                 }
             }
         }

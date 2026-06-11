@@ -188,6 +188,14 @@ strips via llvm-strip post-copy. Reduces dist ~85%.
 
 ## Hard-won implementation rules
 
+**CEF command-line value switches**:
+`append_switch("key=value")` stores the switch under key `"key=value"` with an
+empty value — Chromium's `GetSwitchValueASCII("key")` then never finds it, so
+the flag silently no-ops (only "works" when its value matches the default).
+For any `key=value` flag (autoplay-policy, force-color-profile,
+force-device-scale-factor, use-angle, disable-features, …) split on the first
+`=` and use `append_switch_with_value(key, value)`. Fixed in `cef/app.rs`.
+
 **CEF platform-typed integers**:
 `LogSeverity::get_raw()` and similar return `u32` on macOS, `i32` on
 Windows. Compare via `as i64` cast for cross-platform builds.
