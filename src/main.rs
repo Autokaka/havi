@@ -42,7 +42,7 @@ fn main() {
     register_scheme_handler_factory(Some(&CefString::from(SCHEME)), None, Some(&mut factory));
 
     let outs: Vec<String> = cli.out.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    let (mut ffmpeg, ff_err) = encoder::spawn(cli.width, cli.height, cli.fps, &outs);
+    let (mut ffmpeg, ff_err_tail) = encoder::spawn(cli.width, cli.height, cli.fps, &outs);
     havi_core::register_ffmpeg(ffmpeg.id());
     let (tx, encoder_thread) = encoder::start_pipe(&mut ffmpeg);
 
@@ -103,7 +103,7 @@ fn main() {
     let status = ffmpeg.wait().expect("ffmpeg wait failed");
     havi_core::unregister_ffmpeg(ffmpeg_pid);
     if !status.success() {
-        let tail = ff_err.lock().map(|t| t.join(" | ")).unwrap_or_default();
+        let tail = ff_err_tail.join().unwrap_or_default().join(" | ");
         havi_core::ipc::error(&format!("ffmpeg encoder exited with {status}: {tail}"));
         havi_core::cleanup_session();
         shutdown();

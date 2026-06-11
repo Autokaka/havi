@@ -26,9 +26,7 @@ fn codec_args(out: &str, x265: &str) -> Vec<String> {
     raw.iter().map(|s| s.to_string()).collect()
 }
 
-pub type ErrTail = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
-
-pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> (Child, ErrTail) {
+pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> (Child, JoinHandle<Vec<String>>) {
     let ffmpeg = ffmpeg_path();
     let fps_str = fps.to_string();
     let size = format!("{width}x{height}");
@@ -56,21 +54,19 @@ pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> (Child, ErrT
     let mut child = cmd.spawn().expect("failed to start ffmpeg");
     crate::sandbox::track_child(&child);
 
-    let tail: ErrTail = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    if let Some(stderr) = child.stderr.take() {
-        let tail = tail.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if line.is_empty() { continue; }
-                ipc::console(ipc::Level::Warn, "ffmpeg", &line);
-                if let Ok(mut t) = tail.lock() {
-                    t.push(line);
-                    if t.len() > 12 { t.remove(0); }
-                }
-            }
-        });
-    }
-    (child, tail)
+    let stderr = child.stderr.take();
+    let err_tail = std::thread::spawn(move || {
+        let mut tail = Vec::new();
+        let Some(stderr) = stderr else { return tail };
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if line.is_empty() { continue; }
+            ipc::console(ipc::Level::Warn, "ffmpeg", &line);
+            tail.push(line);
+            if tail.len() > 12 { tail.remove(0); }
+        }
+        tail
+    });
+    (child, err_tail)
 }
 
 const QUEUE_DEPTH: usize = 8;
