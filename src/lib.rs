@@ -8,7 +8,6 @@ pub mod api;
 pub mod cef;
 pub mod cli;
 pub mod common;
-pub mod host;
 pub mod proxy;
 pub mod renderer;
 pub mod video;

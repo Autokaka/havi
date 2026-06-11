@@ -1,12 +1,30 @@
 // Created by Autokaka (qq1909698494@gmail.com) on 2026/05/26.
 
 use crate::cef::cdp::Cdp;
-use crate::host::render::RenderRef;
 use cef::*;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
 pub type BrowserHandle = Arc<Mutex<Option<Browser>>>;
 pub type FrameHandle = Arc<Mutex<Option<Frame>>>;
+
+pub struct State {
+    pub next_frame: u32,
+    pub requested_ms: u32,
+    pub budget_done: bool,
+    pub stuck_invalidates: u32,
+    pub tx: Option<SyncSender<Vec<u8>>>,
+    pub done: bool,
+    pub browser: BrowserHandle,
+    pub iframe: FrameHandle,
+    pub cdp: Cdp,
+    pub width: i32,
+    pub height: i32,
+    pub total_frames: u32,
+    pub frame_ms: f64,
+}
+
+pub type Shared = Arc<Mutex<State>>;
 
 pub fn pause_virtual_time(cdp: &Cdp, host: &BrowserHost) {
     cdp.send(host, "Emulation.setVirtualTimePolicy", r#"{"policy":"pause"}"#);
@@ -31,12 +49,12 @@ fn tick_iframe(frame: &Frame, ms: u32) {
     frame.execute_java_script(Some(&CefString::from(code.as_str())), None, 0);
 }
 
-pub fn step_frame(render: &RenderRef) {
+pub fn step_frame(state: &Shared) {
     let (cdp, browser, iframe, budget_ms, ms) = {
-        let r = render.lock().expect("render poisoned");
-        if r.done { return; }
-        let ms = (((r.capture.next_frame + 1) as f64) * r.frame_ms).floor() as u32;
-        (r.cdp.clone(), r.browser.clone(), r.iframe.clone(), r.frame_ms as u32, ms)
+        let cap = state.lock().expect("state poisoned");
+        if cap.done { return; }
+        let ms = (((cap.next_frame + 1) as f64) * cap.frame_ms).floor() as u32;
+        (cap.cdp.clone(), cap.browser.clone(), cap.iframe.clone(), cap.frame_ms as u32, ms)
     };
 
     let Some(host) = browser.lock().expect("browser poisoned").as_ref().and_then(|b| b.host()) else {
@@ -44,10 +62,10 @@ pub fn step_frame(render: &RenderRef) {
     };
 
     {
-        let mut r = render.lock().expect("render poisoned");
-        r.capture.requested_ms = ms;
-        r.capture.budget_done = false;
-        r.capture.stuck_invalidates = 0;
+        let mut cap = state.lock().expect("state poisoned");
+        cap.requested_ms = ms;
+        cap.budget_done = false;
+        cap.stuck_invalidates = 0;
     }
 
     draw_stego(&cdp, &host, ms);
@@ -58,14 +76,14 @@ pub fn step_frame(render: &RenderRef) {
 }
 
 wrap_task! {
-    pub struct StepTask { pub render: RenderRef }
+    pub struct StepTask { pub state: Shared }
     impl Task {
-        fn execute(&self) { step_frame(&self.render); }
+        fn execute(&self) { step_frame(&self.state); }
     }
 }
 
-pub fn schedule_step(render: &RenderRef) {
-    let mut task = StepTask::new(render.clone());
+pub fn schedule_step(state: &Shared) {
+    let mut task = StepTask::new(state.clone());
     post_task(ThreadId::UI, Some(&mut task));
 }
 
@@ -84,18 +102,13 @@ pub fn schedule_invalidate(browser: BrowserHandle) {
     post_task(ThreadId::UI, Some(&mut task));
 }
 
-pub fn install_budget_listener(render: &RenderRef) {
-    let (cdp, weak) = {
-        let r = render.lock().expect("render poisoned");
-        (r.cdp.clone(), Arc::downgrade(render))
-    };
-    // Weak so a finished/removed render's listener is a no-op, never resurrects it.
+pub fn install_budget_listener(state: Shared) {
+    let cdp = state.lock().expect("state poisoned").cdp.clone();
     cdp.on_event("Emulation.virtualTimeBudgetExpired", move |_| {
-        let Some(render) = weak.upgrade() else { return };
         let browser = {
-            let mut r = render.lock().expect("render poisoned");
-            r.capture.budget_done = true;
-            r.browser.clone()
+            let mut s = state.lock().expect("state poisoned");
+            s.budget_done = true;
+            s.browser.clone()
         };
         schedule_invalidate(browser);
     });

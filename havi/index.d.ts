@@ -57,10 +57,10 @@ export interface RenderInput {
 
 export interface Havi {
   /**
-   * Render HTML to video. Concurrent calls run in parallel inside a single
-   * shared host process (one CEF init, shared HTTP/GPU cache). No internal
-   * concurrency cap — every call starts immediately; throttle at the call
-   * site if needed. Pass an AbortSignal in `input.signal` to cancel a render.
+   * Render HTML to video. Each call spawns its own isolated `havi` process
+   * with a private cache dir (deleted on exit), so any number run concurrently
+   * without contention. No internal concurrency cap — throttle at the call
+   * site. Pass an AbortSignal in `input.signal` to cancel a render.
    */
   render(input: RenderInput): Promise<RenderResult>
   renderHelp(): string
