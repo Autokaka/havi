@@ -16,7 +16,9 @@ pub struct Cli {
     /// Duration in seconds.
     #[arg(short = 't', long, default_value_t = 5)]
     pub duration: u32,
-    #[arg(short, long, default_value = "out.mp4")]
+    /// Comma-separated output paths; extension picks the codec (.mp4 = HEVC+alpha,
+    /// .webm = VP9+alpha). Default writes both.
+    #[arg(short, long, default_value = "out.mp4,out.webm")]
     pub out: String,
     /// On load timeout, proceed with partial DOM instead of erroring out.
     #[arg(long)]

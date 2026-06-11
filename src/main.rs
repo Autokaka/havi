@@ -41,7 +41,8 @@ fn main() {
     let mut factory = HaviFrameFactory::new();
     register_scheme_handler_factory(Some(&CefString::from(SCHEME)), None, Some(&mut factory));
 
-    let mut ffmpeg = encoder::spawn(cli.width, cli.height, cli.fps, &cli.out);
+    let outs: Vec<String> = cli.out.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let mut ffmpeg = encoder::spawn(cli.width, cli.height, cli.fps, &outs);
     havi_core::register_ffmpeg(ffmpeg.id());
     let (tx, encoder_thread) = encoder::start_pipe(&mut ffmpeg);
 

@@ -20,7 +20,7 @@ pub struct RenderOpts {
 }
 
 impl RenderOpts {
-    pub fn out_or(&self) -> &str { self.out.as_deref().unwrap_or("out.mp4") }
+    pub fn out_or(&self) -> &str { self.out.as_deref().unwrap_or("out.mp4,out.webm") }
     pub fn width_or(&self) -> i32 { self.width.unwrap_or(1920) }
     pub fn height_or(&self) -> i32 { self.height.unwrap_or(1080) }
     pub fn fps_or(&self) -> u32 { self.fps.unwrap_or(30) }

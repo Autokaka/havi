@@ -2,7 +2,7 @@
 
 use crate::ipc;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread::JoinHandle;
@@ -13,34 +13,36 @@ pub fn ffmpeg_path() -> PathBuf {
     if cfg!(windows) { dir.join("ffmpeg.exe") } else { dir.join("ffmpeg") }
 }
 
-pub fn spawn(width: i32, height: i32, fps: u32, out_path: &str) -> Child {
+// .webm → VP9+alpha, else → HEVC+alpha mp4 (libx265 ENABLE_ALPHA, bit-exact).
+fn codec_args(out: &str, x265: &str) -> Vec<String> {
+    let webm = Path::new(out).extension().is_some_and(|e| e.eq_ignore_ascii_case("webm"));
+    let raw: &[&str] = if webm {
+        &["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "4M",
+          "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"]
+    } else {
+        &["-c:v", "libx265", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuva420p",
+          "-tag:v", "hvc1", "-x265-params", x265, "-movflags", "+faststart"]
+    };
+    raw.iter().map(|s| s.to_string()).collect()
+}
+
+pub fn spawn(width: i32, height: i32, fps: u32, outs: &[String]) -> Child {
     let ffmpeg = ffmpeg_path();
     let fps_str = fps.to_string();
     let size = format!("{width}x{height}");
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string();
-    let x265_params = format!(
-        "log-level=1:alpha=1:pools={threads}:frame-threads={threads}:no-info=1"
-    );
-    let args: Vec<&str> = vec![
-        "-loglevel", "error",
-        "-y",
-        "-f", "rawvideo",
-        "-pixel_format", "bgra",
-        "-video_size", &size,
-        "-framerate", &fps_str,
-        "-i", "-",
-        // jellyfin-ffmpeg's libx265 ships with ENABLE_ALPHA — cross-platform bit-exact.
-        "-c:v", "libx265",
-        "-preset", "fast",
-        "-crf", "23",
-        "-pix_fmt", "yuva420p",
-        "-tag:v", "hvc1",
-        "-x265-params", &x265_params,
-        "-movflags", "+faststart",
-        out_path,
-    ];
+    let x265_params = format!("log-level=1:alpha=1:pools={threads}:frame-threads={threads}:no-info=1");
+
+    let mut args: Vec<String> = ["-loglevel", "error", "-y", "-f", "rawvideo",
+        "-pixel_format", "bgra", "-video_size", &size, "-framerate", &fps_str, "-i", "-"]
+        .iter().map(|s| s.to_string()).collect();
+    for out in outs {
+        args.extend(codec_args(out, &x265_params));
+        args.push(out.clone());
+    }
+
     let mut cmd = Command::new(ffmpeg);
-    cmd.args(args)
+    cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
