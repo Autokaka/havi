@@ -249,8 +249,13 @@ async function cargoBuild(triple: string, builder: string, profile: string, extr
     else args.push("build", "--target", triple);
     if (profile === "release") args.push("--release");
     args.push(...extra);
+    const env: Record<string, string> = { CEF_PATH: cefCache() };
+    // Linux: find libcef.so next to the binary/.node (loader expands $ORIGIN at runtime).
+    if (triple.includes("linux")) {
+      env["RUSTFLAGS"] = `${process.env["RUSTFLAGS"] ?? ""} -C link-arg=-Wl,-rpath,$ORIGIN`.trim();
+    }
     try {
-      await run(args, { CEF_PATH: cefCache() });
+      await run(args, env);
       return;
     } catch (e) {
       console.error(`attempt ${attempt}/3 failed for ${triple}: ${e}`);
