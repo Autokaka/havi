@@ -58,9 +58,9 @@ export interface RenderInput {
 export interface Havi {
   /**
    * Render HTML to video. Concurrent calls run in parallel inside a single
-   * shared host process (one CEF init, shared HTTP/GPU cache). Up to
-   * HAVI_MAX_PARALLEL (default 4) renders run at once; excess queue.
-   * Pass an AbortSignal in `input.signal` to cancel an individual render.
+   * shared host process (one CEF init, shared HTTP/GPU cache). No internal
+   * concurrency cap — every call starts immediately; throttle at the call
+   * site if needed. Pass an AbortSignal in `input.signal` to cancel a render.
    */
   render(input: RenderInput): Promise<RenderResult>
   renderHelp(): string

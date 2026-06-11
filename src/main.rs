@@ -6,7 +6,7 @@ use havi_core::api::RenderOpts;
 use havi_core::cef::app::{init_api, make_app};
 use havi_core::cli::Cli;
 use havi_core::host::render::Host;
-use havi_core::host::run::{install_start_fn, max_parallel, run};
+use havi_core::host::run::{install_start_fn, run};
 use havi_core::video::encoder;
 use havi_core::video::scheme::{self, HaviFrameFactory, SCHEME};
 
@@ -35,7 +35,7 @@ fn main() {
     let mut factory = HaviFrameFactory::new();
     register_scheme_handler_factory(Some(&CefString::from(SCHEME)), None, Some(&mut factory));
 
-    let host = Host::new(max_parallel());
+    let host = Host::new();
 
     {
         let host = host.clone();

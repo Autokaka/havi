@@ -15,13 +15,6 @@ use cef::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-pub fn max_parallel() -> usize {
-    std::env::var("HAVI_MAX_PARALLEL").ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(4)
-}
-
 pub fn install_start_fn(host: &Arc<Host>) {
     host.set_start_fn(Box::new(|host, id, opts| start_render(host, id, opts)));
 }

@@ -46,20 +46,16 @@ pub type StartFn = Box<dyn Fn(&Arc<Host>, RenderId, crate::api::RenderOpts) + Se
 pub struct Host {
     renders: Mutex<HashMap<RenderId, RenderRef>>,
     by_browser: Mutex<HashMap<i32, RenderId>>,
-    queue: Mutex<std::collections::VecDeque<(RenderId, crate::api::RenderOpts)>>,
-    max_parallel: usize,
     start_fn: Mutex<Option<StartFn>>,
     single_shot: Mutex<Option<RenderId>>,
     creating: Mutex<Option<RenderRef>>,
 }
 
 impl Host {
-    pub fn new(max_parallel: usize) -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Arc::new(Self {
             renders: Mutex::new(HashMap::new()),
             by_browser: Mutex::new(HashMap::new()),
-            queue: Mutex::new(std::collections::VecDeque::new()),
-            max_parallel: max_parallel.max(1),
             start_fn: Mutex::new(None),
             single_shot: Mutex::new(None),
             creating: Mutex::new(None),
@@ -90,10 +86,7 @@ impl Host {
 
     fn maybe_quit_single_shot(&self, finished: RenderId) {
         let target = *self.single_shot.lock().expect("single_shot poisoned");
-        if target == Some(finished)
-            && self.active_count() == 0
-            && self.queue.lock().expect("queue poisoned").is_empty()
-        {
+        if target == Some(finished) && self.active_count() == 0 {
             quit_message_loop();
         }
     }
@@ -133,25 +126,9 @@ impl Host {
     }
 
     pub fn submit(self: &Arc<Self>, id: RenderId, opts: crate::api::RenderOpts) {
-        let at_cap = self.active_count() >= self.max_parallel;
-        if at_cap {
-            self.queue.lock().expect("queue poisoned").push_back((id, opts));
-            return;
-        }
-        self.spawn_render(id, opts);
-    }
-
-    fn spawn_render(self: &Arc<Self>, id: RenderId, opts: crate::api::RenderOpts) {
         let f = self.start_fn.lock().expect("start_fn poisoned");
         if let Some(start) = f.as_ref() {
             start(self, id, opts);
-        }
-    }
-
-    fn drain_queue(self: &Arc<Self>) {
-        let next = self.queue.lock().expect("queue poisoned").pop_front();
-        if let Some((id, opts)) = next {
-            self.spawn_render(id, opts);
         }
     }
 
@@ -178,7 +155,6 @@ impl Host {
                 emit_evt(&Evt::Error { id, message: "ffmpeg encoder failed".into() });
             }
         }
-        self.drain_queue();
         self.maybe_quit_single_shot(id);
     }
 
@@ -198,7 +174,6 @@ impl Host {
         if let Some(b) = render.lock().expect("render poisoned").browser.lock().expect("browser").take() {
             if let Some(h) = b.host() { h.close_browser(1); }
         }
-        self.drain_queue();
         self.maybe_quit_single_shot(id);
     }
 
@@ -227,7 +202,7 @@ mod tests {
 
     #[test]
     fn route_by_browser_id() {
-        let host = Host::new(4);
+        let host = Host::new();
         host.insert(fake_render(1));
         host.insert(fake_render(2));
         host.bind_browser(101, 1);
@@ -239,7 +214,7 @@ mod tests {
 
     #[test]
     fn remove_clears_browser_binding() {
-        let host = Host::new(4);
+        let host = Host::new();
         host.insert(fake_render(1));
         host.bind_browser(101, 1);
         assert_eq!(host.active_count(), 1);
