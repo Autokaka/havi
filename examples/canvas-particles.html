@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>havi — canvas particles</title>
+    <style>
+      * { margin: 0; } html, body { width: 100%; height: 100%; overflow: hidden; background: #05060a; }
+      canvas { display: block; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <script>
+      const cv = document.getElementById("c");
+      const ctx = cv.getContext("2d");
+      function size() { cv.width = innerWidth; cv.height = innerHeight; }
+      size(); addEventListener("resize", size);
+
+      const N = 140;
+      const ps = Array.from({ length: N }, (_, i) => ({
+        a: (i / N) * Math.PI * 2,
+        r: 0.18 + (i % 7) * 0.03,
+        s: 0.4 + (i % 5) * 0.12,
+        hue: (i * 360) / N,
+      }));
+
+      function frame(t) {
+        const w = cv.width, h = cv.height, cx = w / 2, cy = h / 2;
+        const sec = t / 1000;
+        ctx.fillStyle = "rgba(5,6,10,0.25)";
+        ctx.fillRect(0, 0, w, h);
+        const R = Math.min(w, h);
+        for (const p of ps) {
+          const ang = p.a + sec * p.s;
+          const rad = (p.r + 0.06 * Math.sin(sec * 1.5 + p.a * 3)) * R;
+          const x = cx + Math.cos(ang) * rad;
+          const y = cy + Math.sin(ang) * rad;
+          const rr = 2 + 2 * (1 + Math.sin(sec * 2 + p.a));
+          ctx.beginPath();
+          ctx.fillStyle = `hsl(${(p.hue + sec * 30) % 360} 90% 62%)`;
+          ctx.arc(x, y, rr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { havi } from "../havi/index.js";
-const src = new URL("../stamp.html", import.meta.url).pathname;
+const src = new URL("../examples/stamp.html", import.meta.url).pathname;
 const mk = (out) => havi.render({
   options: { source: src, out, width: 320, height: 240, duration: 2 },
   onConsole: () => {},

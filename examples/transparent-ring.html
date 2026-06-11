@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>havi — transparent (alpha)</title>
+    <style>
+      /* Transparent background — havi captures real alpha and encodes HEVC yuva420p.
+         Render this over any backdrop in a compositor. */
+      * { margin: 0; } html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+      .stage { position: absolute; inset: 0; display: grid; place-items: center; }
+      .ring { width: 44vmin; height: 44vmin; border-radius: 50%;
+        border: 3vmin solid transparent;
+        border-top-color: #2bd2ff; border-right-color: #8a7bff;
+        animation: spin 1.4s cubic-bezier(.5,.1,.5,.9) infinite;
+        filter: drop-shadow(0 0 2vmin rgba(43,210,255,.6)); }
+      .ring::after { content: ""; position: absolute; inset: 2vmin; border-radius: 50%;
+        border: 1.5vmin solid transparent; border-bottom-color: #47e891;
+        animation: spin 2.2s linear infinite reverse; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="stage"><div class="ring"></div></div>
+  </body>
+</html>

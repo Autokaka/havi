@@ -27,7 +27,7 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT",
+  "license": "BSD-3-Clause",
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "latest"
